@@ -25,11 +25,7 @@ __all__ = [
     "Alignment",
     "Alternative",
     "QAP",
-    "QAPResult",
     "QAPStudy",
-    "align_node_universe",
-    "canonicalize_nodes",
-    "qap_compare",
 ]
 
 

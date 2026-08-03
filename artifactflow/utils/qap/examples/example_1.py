@@ -1,6 +1,6 @@
 import networkx as nx
 
-from artifactflow.utils.qap.qap import QAPStudy
+from artifactflow.utils.qap.qap import QAP
 
 
 workflow_a = nx.DiGraph()
@@ -43,7 +43,7 @@ workflow_b.add_edges_from([
 ])
 
 
-study = QAPStudy(
+study = QAP(
     networks={
         "Workflow A": workflow_a,
         "Workflow B": workflow_b,

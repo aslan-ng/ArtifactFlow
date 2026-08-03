@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from itertools import combinations
+
 import networkx as nx
 
 from artifactflow.workflow.network import Network
@@ -8,73 +12,210 @@ class ToolNetwork(
     Network,
 ):
 
-    def workflow_from_tools(
-        self,
-        include_tool_names: list[str] | None = None,
-        exclude_tool_names: list[str] | None = None,
-    ) -> Workflow:
-        available_names = {
-            str(tool.name)
-            for tool in self.tools
-        }
+    def __init__(self):
+        super().__init__()
 
-        include_names = (
-            set(include_tool_names)
-            if include_tool_names is not None
-            else available_names
-        )
+        self.starting_artifacts: list[str] | None = None
+        self.target_artifacts: list[str] | None = None
+        self.include_tools: list[str] | None = None
+        self.exclude_tools: list[str] | None = None
 
-        exclude_names = set(
-            exclude_tool_names or []
-        )
+    def to_workflow(self) -> Workflow:
+        """
+        Convert this tool network into one workflow.
 
-        unknown_names = (
-            include_names | exclude_names
-        ) - available_names
-
-        if unknown_names:
+        The network must be connected to represent one process.
+        """
+        if not self.tools:
             raise ValueError(
-                f"Unknown tools: {sorted(unknown_names)}"
+                "Cannot create a workflow from an empty tool network."
             )
-
-        if include_tool_names is not None:
-            conflicting_names = (
-                include_names & exclude_names
-            )
-
-            if conflicting_names:
-                raise ValueError(
-                    "Tools cannot be both included and excluded: "
-                    f"{sorted(conflicting_names)}"
-                )
-
-        selected_names = (
-            include_names - exclude_names
-        )
-
-        if not selected_names:
-            raise ValueError(
-                "No tools remain in the workflow."
-            )
-
-        selected_tools = [
-            tool
-            for tool in self.tools
-            if tool.name in selected_names
-        ]
 
         workflow = Workflow()
 
-        for tool in selected_tools:
+        for tool in self.tools:
             workflow.add_tool(tool)
 
         if not nx.is_weakly_connected(workflow.G):
             raise ValueError(
-                "The selected tools create disconnected processes."
+                "The tool network contains disconnected processes, "
+                "so it cannot become one workflow."
             )
 
         return workflow
-        
+
+    def filter(
+        self,
+        starting_artifacts: list[str] | None = None,
+        target_artifacts: list[str] | None = None,
+        include_tools: list[str] | None = None,
+        exclude_tools: list[str] | None = None,
+    ) -> "ToolNetwork":
+        """
+        Filter tools in the tool network
+        """
+
+        tools_by_name = {
+            str(tool.name): tool
+            for tool in self.tools
+        }
+
+        available_tool_names = set(tools_by_name)
+
+        included_names = (
+            set(include_tools)
+            if include_tools is not None
+            else available_tool_names
+        )
+
+        excluded_names = set(exclude_tools or [])
+
+        unknown_tools = (
+            included_names | excluded_names
+        ) - available_tool_names
+
+        if unknown_tools:
+            raise ValueError(
+                f"Unknown tools: {sorted(unknown_tools)}"
+            )
+
+        selected_names = (
+            included_names - excluded_names
+        )
+
+        candidate = ToolNetwork()
+
+        for tool in self.tools:
+            if tool.name in selected_names:
+                candidate.add_tool(tool)
+
+        artifact_names = {
+            node
+            for node, data in candidate.G.nodes(data=True)
+            if data["type"] == "artifact"
+        }
+
+        requested_artifacts = (
+            set(starting_artifacts or [])
+            | set(target_artifacts or [])
+        )
+
+        unknown_artifacts = (
+            requested_artifacts - artifact_names
+        )
+
+        if unknown_artifacts:
+            raise ValueError(
+                f"Unknown artifacts: {sorted(unknown_artifacts)}"
+            )
+
+        relevant_nodes = set(candidate.G.nodes)
+
+        if starting_artifacts is not None:
+            forward_nodes = set(starting_artifacts)
+
+            for artifact in starting_artifacts:
+                forward_nodes.update(
+                    nx.descendants(candidate.G, artifact)
+                )
+
+            relevant_nodes &= forward_nodes
+
+        if target_artifacts is not None:
+            backward_nodes = set(target_artifacts)
+
+            for artifact in target_artifacts:
+                backward_nodes.update(
+                    nx.ancestors(candidate.G, artifact)
+                )
+
+            relevant_nodes &= backward_nodes
+
+        filtered = ToolNetwork()
+
+        for tool in candidate.tools:
+            if tool.name in relevant_nodes:
+                filtered.add_tool(tool)
+
+        filtered.starting_artifacts = (
+            None
+            if starting_artifacts is None
+            else list(starting_artifacts)
+        )
+        filtered.target_artifacts = (
+            None
+            if target_artifacts is None
+            else list(target_artifacts)
+        )
+        filtered.include_tools = (
+            None
+            if include_tools is None
+            else list(include_tools)
+        )
+        filtered.exclude_tools = (
+            None
+            if exclude_tools is None
+            else list(exclude_tools)
+        )
+
+        return filtered
+
+    def discover(self) -> list[Workflow]:
+        """
+        Create every workflow that satisfies this tool network's filters.
+
+        Workflows are returned largest first. Tools within each workflow keep
+        their insertion order from the tool network.
+        """
+        workflows = []
+
+        for tool_count in range(len(self.tools), 0, -1):
+            for tools in combinations(self.tools, tool_count):
+                workflow = Workflow()
+
+                for tool in tools:
+                    workflow.add_tool(tool)
+
+                if not nx.is_weakly_connected(workflow.G):
+                    continue
+
+                workflow_tool_names = set(workflow.tool_names)
+
+                if (
+                    self.include_tools is not None
+                    and not set(self.include_tools) <= workflow_tool_names
+                ):
+                    continue
+
+                if (
+                    self.exclude_tools is not None
+                    and set(self.exclude_tools) & workflow_tool_names
+                ):
+                    continue
+
+                starting_artifacts = self.starting_artifacts or []
+                target_artifacts = self.target_artifacts or []
+
+                if not set(starting_artifacts) <= workflow.G.nodes:
+                    continue
+
+                if not set(target_artifacts) <= workflow.G.nodes:
+                    continue
+
+                if starting_artifacts and target_artifacts:
+                    has_all_paths = all(
+                        nx.has_path(workflow.G, start, target)
+                        for start in starting_artifacts
+                        for target in target_artifacts
+                    )
+
+                    if not has_all_paths:
+                        continue
+
+                workflows.append(workflow)
+
+        return workflows
+
 
 if __name__ == "__main__":
 
@@ -88,6 +229,10 @@ if __name__ == "__main__":
 
     tool_network.show()
 
-    workflow = tool_network.workflow_from_tools(exclude_tool_names=["Tool 4"])
+    filtered_tool_network = tool_network.filter(exclude_tools=["Tool 4", "Tool 2"])
+    filtered_tool_network = filtered_tool_network.filter(starting_artifacts=["Artifact 4"])
 
-    workflow.show()
+    filtered_tool_network.show()
+
+    workflows = filtered_tool_network.discover()
+    print(len(workflows))

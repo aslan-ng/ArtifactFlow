@@ -1,4 +1,4 @@
-from artifactflow.utils.qap.qap import QAPStudy
+from artifactflow.utils.qap.qap import QAP
 from artifactflow.workflow.tool_network import ToolNetwork
 from artifactflow.tool.examples import (
     tool_1,
@@ -34,7 +34,7 @@ tool_network_3.add_tool(tool_4)
 
 """Align all networks to the same global node universe"""
 
-study = QAPStudy(
+study = QAP(
     networks={
         "Tool Network 1": tool_network_1.G,
         "Tool Network 2": tool_network_2.G,

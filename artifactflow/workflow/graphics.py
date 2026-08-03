@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 
 
 class Graphics:
+    G: nx.DiGraph
 
     def show(self):
         if not self.G:

@@ -1,3 +1,3 @@
-from .workflow import Workflow
+from .workflow import Workflow, WorkflowInputRequirements
 
-__all__ = ["Workflow"]
+__all__ = ["Workflow", "WorkflowInputRequirements"]
