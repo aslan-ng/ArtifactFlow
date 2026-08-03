@@ -4,7 +4,7 @@ import networkx as nx
 import numpy as np
 
 from artifactflow.tool.examples import tool_1, tool_2, tool_3, tool_4
-from artifactflow.workflow.tool_network import ToolNetwork
+from artifactflow.tool_network.tool_network import ToolNetwork
 from artifactflow.utils.qap.qap import QAP, QAPStudy, qap_compare
 
 
@@ -80,6 +80,29 @@ class TestQAPStudy(unittest.TestCase):
                 result_b.null_distribution,
             )
             self.assertEqual(result_a.p_value, result_b.p_value)
+
+    def test_correlation_matrix_matches_pairwise_results(self):
+        study = self.make_study()
+
+        matrix = study.correlation_matrix()
+        results = study.compare_all(permutations=1)
+
+        self.assertEqual(matrix.shape, (3, 3))
+        np.testing.assert_array_equal(np.diag(matrix), np.ones(3))
+        np.testing.assert_allclose(matrix, matrix.T)
+
+        positions = {
+            name: index
+            for index, name in enumerate(study.network_names)
+        }
+        for result in results:
+            self.assertAlmostEqual(
+                matrix[
+                    positions[result.network_a_name],
+                    positions[result.network_b_name],
+                ],
+                result.correlation,
+            )
 
     def test_qap_remains_an_alias(self):
         self.assertIs(QAP, QAPStudy)

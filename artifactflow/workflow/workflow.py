@@ -1,7 +1,9 @@
+from __future__ import annotations
 from dataclasses import dataclass
 
+from artifactflow.network.network import Network
 from artifactflow.tool.compatibility.tools_compatibility import tool_readiness
-from artifactflow.workflow.network import Network
+from artifactflow.utils.qap import QAPStudy
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +200,24 @@ class Workflow(
             return 1.0
 
         return sum(scores.values()) / len(scores)
+
+    def similarity_score(self, other: Workflow) -> float:
+        """
+        Return the observed typed-node QAP correlation with another workflow.
+
+        The workflows are aligned to the union of their tool and artifact
+        nodes. This method does not run a permutation significance test.
+        """
+        if not isinstance(other, Workflow):
+            raise TypeError("other must be a Workflow.")
+
+        study = QAPStudy(
+            networks={
+                "Workflow A": self.G,
+                "Workflow B": other.G,
+            },
+        )
+        return study.correlation("Workflow A", "Workflow B")
 
 
 if __name__ == "__main__":

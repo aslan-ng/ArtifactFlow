@@ -4,7 +4,7 @@ import networkx as nx
 
 from artifactflow.artifact.artifact import Artifact
 from artifactflow.tool.tool import Tool
-from artifactflow.workflow.tool_network import ToolNetwork
+from artifactflow.tool_network.tool_network import ToolNetwork
 from artifactflow.workflow.workflow import Workflow
 
 
@@ -98,6 +98,63 @@ class TestToolNetworkDiscover(unittest.TestCase):
         self.assertEqual(
             [workflow.tool_names for workflow in filtered.discover()],
             [["A", "B"]],
+        )
+
+    def test_similar_workflows_are_ranked_and_include_the_reference(self):
+        network = make_tool_network(self.tool_a, self.tool_b, self.tool_c)
+        reference = make_tool_network(self.tool_a, self.tool_b).to_workflow()
+
+        ranked = network.similar_workflows(reference)
+
+        self.assertEqual(len(ranked), 4)
+        self.assertTrue(nx.utils.graphs_equal(ranked[0][0].G, reference.G))
+        self.assertEqual(ranked[0][1], 1.0)
+        self.assertEqual(
+            [score for _, score in ranked],
+            sorted(
+                (score for _, score in ranked),
+                reverse=True,
+            ),
+        )
+
+    def test_similar_workflows_can_ignore_the_reference(self):
+        network = make_tool_network(self.tool_a, self.tool_b, self.tool_c)
+        reference = make_tool_network(self.tool_a, self.tool_b).to_workflow()
+
+        ranked = network.similar_workflows(
+            reference,
+            ignore_identical=True,
+        )
+
+        self.assertEqual(len(ranked), 3)
+        self.assertTrue(all(
+            not nx.utils.graphs_equal(candidate.G, reference.G)
+            for candidate, _ in ranked
+        ))
+
+    def test_similar_workflows_use_remembered_discovery_filters(self):
+        start = Artifact("start")
+        middle = Artifact("middle")
+        target = Artifact("target")
+        first = Tool("first", inputs=[start], outputs=[middle])
+        second = Tool("second", inputs=[middle], outputs=[target])
+        network = make_tool_network(first, second)
+        filtered = network.filter(
+            starting_artifacts=["start"],
+            target_artifacts=["target"],
+        )
+        reference = filtered.to_workflow()
+
+        ranked = filtered.similar_workflows(reference)
+
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0][1], 1.0)
+        self.assertEqual(
+            filtered.similar_workflows(
+                reference,
+                ignore_identical=True,
+            ),
+            [],
         )
 
 

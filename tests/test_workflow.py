@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from artifactflow.artifact.artifact import Artifact
 from artifactflow.tool.tool import Tool
 from artifactflow.workflow.workflow import Workflow
@@ -173,6 +175,43 @@ class TestWorkflowInputRequirements(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Unknown starting tools"):
             self.cycle.input_requirements(["missing"])
+
+
+class TestWorkflowSimilarityScore(unittest.TestCase):
+    def setUp(self):
+        artifact_x = Artifact("x")
+        artifact_y = Artifact("y")
+        artifact_z = Artifact("z")
+        first = Tool(
+            "first",
+            inputs=[artifact_x],
+            outputs=[artifact_y],
+        )
+        second = Tool(
+            "second",
+            inputs=[artifact_y],
+            outputs=[artifact_z],
+        )
+        self.short_workflow = make_workflow(first)
+        self.long_workflow = make_workflow(first, second)
+
+    def test_identical_workflows_have_similarity_one(self):
+        same_workflow = make_workflow(*self.short_workflow.tools)
+
+        self.assertAlmostEqual(
+            self.short_workflow.similarity_score(same_workflow),
+            1.0,
+        )
+
+    def test_uses_union_alignment_for_different_workflows(self):
+        score = self.short_workflow.similarity_score(self.long_workflow)
+
+        self.assertAlmostEqual(score, 2 / 3)
+        self.assertAlmostEqual(
+            score,
+            self.long_workflow.similarity_score(self.short_workflow),
+        )
+        self.assertTrue(np.isfinite(score))
 
 
 if __name__ == "__main__":

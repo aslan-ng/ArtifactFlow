@@ -4,7 +4,8 @@ from itertools import combinations
 
 import networkx as nx
 
-from artifactflow.workflow.network import Network
+from artifactflow.utils.qap import QAPStudy
+from artifactflow.network.network import Network
 from artifactflow.workflow.workflow import Workflow
 
 
@@ -215,6 +216,74 @@ class ToolNetwork(
                 workflows.append(workflow)
 
         return workflows
+
+    def similar_workflows(
+        self,
+        workflow: Workflow,
+        *,
+        ignore_identical: bool = False,
+    ) -> list[tuple[Workflow, float]]:
+        """
+        Return discovered workflows ranked by similarity to a workflow.
+
+        All candidates are aligned together in one QAP study so every score
+        uses the same node universe. Structurally identical candidates are
+        included by default with a score of 1.0.
+        """
+        if not isinstance(workflow, Workflow):
+            raise TypeError("workflow must be a Workflow.")
+
+        if not isinstance(ignore_identical, bool):
+            raise TypeError("ignore_identical must be a boolean.")
+
+        candidates = [
+            candidate
+            for candidate in self.discover()
+            if not ignore_identical
+            or not nx.utils.graphs_equal(candidate.G, workflow.G)
+        ]
+
+        if not candidates:
+            return []
+
+        reference_name = "Reference Workflow"
+        candidate_names = [
+            f"Candidate Workflow {index}"
+            for index in range(1, len(candidates) + 1)
+        ]
+        study = QAPStudy(
+            networks={
+                reference_name: workflow.G,
+                **{
+                    name: candidate.G
+                    for name, candidate in zip(
+                        candidate_names,
+                        candidates,
+                        strict=True,
+                    )
+                },
+            }
+        )
+
+        ranked_workflows = [
+            (
+                candidate,
+                1.0
+                if nx.utils.graphs_equal(candidate.G, workflow.G)
+                else study.correlation(reference_name, candidate_name),
+            )
+            for candidate_name, candidate in zip(
+                candidate_names,
+                candidates,
+                strict=True,
+            )
+        ]
+        ranked_workflows.sort(
+            key=lambda candidate_and_score: candidate_and_score[1],
+            reverse=True,
+        )
+
+        return ranked_workflows
 
 
 if __name__ == "__main__":

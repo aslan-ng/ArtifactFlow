@@ -255,6 +255,43 @@ class QAPStudy:
             rng=rng,
         )
 
+    def correlation(
+        self,
+        network_a_name: str,
+        network_b_name: str,
+    ) -> float:
+        """Return the observed correlation without a permutation test."""
+        self._validate_network_name(network_a_name)
+        self._validate_network_name(network_b_name)
+
+        if network_a_name == network_b_name:
+            return 1.0
+
+        vector_a = self._matrices[network_a_name][self._dyad_indices]
+        vector_b = self._matrices[network_b_name][self._dyad_indices]
+
+        return _pearson_correlation(
+            vector_a,
+            vector_b,
+            context="the observed comparison",
+        )
+
+    def correlation_matrix(self) -> Array:
+        """Return the symmetric observed-correlation matrix."""
+        matrix = np.eye(len(self._network_names), dtype=np.float64)
+
+        for index_a, index_b in combinations(
+            range(len(self._network_names)), 2
+        ):
+            correlation = self.correlation(
+                self._network_names[index_a],
+                self._network_names[index_b],
+            )
+            matrix[index_a, index_b] = correlation
+            matrix[index_b, index_a] = correlation
+
+        return matrix
+
     def compare_all(
         self,
         *,

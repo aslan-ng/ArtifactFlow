@@ -2,12 +2,15 @@ from __future__ import annotations
 import networkx as nx
 
 from artifactflow.tool import Tool
-from artifactflow.workflow.graphics import Graphics
+from artifactflow.network.graphics import Graphics
 
 
 class Network(
     Graphics,
 ):
+    """
+    Super class for Workflow and ToolNetwork classes.
+    """
 
     def __init__(
         self,
