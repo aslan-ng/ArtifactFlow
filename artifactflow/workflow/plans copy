@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+
+from artifactflow.tool import Tool
+#from artifactflow.workflow import Workflow
+
+
+class WorkflowPlans:
+
+    def __init__(self, tools: list[Tool]):
+        self.tools = tools
+        self.plans = self.generate_plans()
+        self.compatibility_matrix = self.generate_tool_compatibility_matrix()
+
+    @property
+    def tool_names(self):
+        return [tool.name for tool in self.tools]
+
+    def other_tools(self, tool: Tool):
+        return [t for t in self.tools if t != tool]
+
+    def generate_tool_compatibility_matrix(self):
+        """
+        rows: tools that provide outputs
+        columns: tools that require inputs
+        values: compatibility score
+        """
+        tool_names = self.tool_names
+        matrix = pd.DataFrame(
+            index=tool_names,
+            columns=tool_names,
+        )
+        for tool in self.tools:
+            for next_tool in self.other_tools(tool):
+                score = tool_compatibility(
+                    inputs=next_tool.inputs,
+                    outputs=tool.outputs
+                )
+                matrix.loc[tool.name, next_tool.name] = score
+        return matrix
+
+    def generate_plans(self):
+        plans = []

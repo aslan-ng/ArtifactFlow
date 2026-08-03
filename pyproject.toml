@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "artifactflow"
+version = "0.1.0"
+description = "Artifact-aware workflow synthesis and orchestration by matching tool inputs, outputs, and dependencies."
+license = { text = "MIT" }
+keywords = [
+    "artifacts",
+    "orchestration",
+    "workflow",
+    "workflow-synthesis",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["artifactflow*"]
