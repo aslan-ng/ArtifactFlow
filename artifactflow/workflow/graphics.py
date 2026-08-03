@@ -1,34 +1,8 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from artifactflow.tool import Tool
 
-
-class ToolNetwork:
-
-    def __init__(
-        self,
-    ):
-        self.tools = []
-        self.G = nx.DiGraph()
-
-    @property
-    def tool_names(self):
-        return [tool.name for tool in self.tools]
-
-    def add_tool(self, tool: Tool):
-        if tool.name in self.tool_names:
-            raise ValueError(f"Tool with name {tool.name} already exists in the workflow.")
-        self.tools.append(tool)
-        self.G.add_node(tool.name, type='tool')
-
-        for artifact in tool.inputs:
-            self.G.add_node(artifact.name, type='artifact')
-            self.G.add_edge(artifact.name, tool.name, type='input')
-
-        for artifact in tool.outputs:
-            self.G.add_node(artifact.name, type='artifact')
-            self.G.add_edge(tool.name, artifact.name, type='output')
+class Graphics:
 
     def show(self):
         if not self.G:
@@ -104,16 +78,3 @@ class ToolNetwork:
         ax.set_axis_off()
         plt.tight_layout()
         plt.show()
-        
-
-if __name__ == "__main__":
-
-    from artifactflow.tool.examples import tool_1, tool_2, tool_3, tool_4
-
-    tool_network = ToolNetwork()
-    tool_network.add_tool(tool_1)
-    tool_network.add_tool(tool_2)
-    tool_network.add_tool(tool_3)
-    tool_network.add_tool(tool_4)
-
-    tool_network.show()

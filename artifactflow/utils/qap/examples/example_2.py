@@ -1,5 +1,5 @@
 from artifactflow.utils.qap.qap import QAPStudy
-from artifactflow.tool.tool_network import ToolNetwork
+from artifactflow.workflow.tool_network import ToolNetwork
 from artifactflow.tool.examples import (
     tool_1,
     tool_2,

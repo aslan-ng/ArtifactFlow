@@ -4,7 +4,7 @@ import networkx as nx
 import numpy as np
 
 from artifactflow.tool.examples import tool_1, tool_2, tool_3, tool_4
-from artifactflow.tool.tool_network import ToolNetwork
+from artifactflow.workflow.tool_network import ToolNetwork
 from artifactflow.utils.qap.qap import QAP, QAPStudy, qap_compare
 
 
