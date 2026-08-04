@@ -1,8 +1,29 @@
 from __future__ import annotations
+
+from dataclasses import dataclass
+
 import networkx as nx
+import numpy as np
+from numpy.typing import NDArray
 
 from artifactflow.tool import Tool
 from artifactflow.network.graphics import Graphics
+
+
+@dataclass(frozen=True, slots=True)
+class ToolDependencyMatrix:
+    """A tool DSM together with its shared row and column labels."""
+
+    matrix: NDArray[np.int64]
+    tool_names: tuple[str, ...]
+
+    @property
+    def tool_indices(self) -> dict[str, int]:
+        """Return each tool's row and column index in the matrix."""
+        return {
+            tool_name: index
+            for index, tool_name in enumerate(self.tool_names)
+        }
 
 
 class Network(
@@ -29,6 +50,85 @@ class Network(
             for node, data in self.G.nodes(data=True)
             if data.get("type") == "artifact"
         ]
+
+    def to_tool_dependency_graph(self) -> nx.DiGraph:
+        """
+        Return a tool-only projection of the artifact dependency graph.
+
+        Each edge points from an artifact producer to an artifact consumer.
+        When several artifacts connect the same two tools, their names are
+        stored together in the edge's ``artifacts`` attribute.
+        """
+        tool_graph = nx.DiGraph()
+        tool_graph.add_nodes_from(
+            (
+                tool_name,
+                self.G.nodes[tool_name].copy(),
+            )
+            for tool_name in self.tool_names
+        )
+
+        for artifact_name in self.artifact_names:
+            producer_names = [
+                node_name
+                for node_name in self.G.predecessors(artifact_name)
+                if self.G.nodes[node_name].get("type") == "tool"
+            ]
+            consumer_names = [
+                node_name
+                for node_name in self.G.successors(artifact_name)
+                if self.G.nodes[node_name].get("type") == "tool"
+            ]
+
+            for producer_name in producer_names:
+                for consumer_name in consumer_names:
+                    if tool_graph.has_edge(producer_name, consumer_name):
+                        tool_graph[producer_name][consumer_name][
+                            "artifacts"
+                        ].append(artifact_name)
+                    else:
+                        tool_graph.add_edge(
+                            producer_name,
+                            consumer_name,
+                            artifacts=[artifact_name],
+                        )
+
+        return tool_graph
+
+    def to_tool_dependency_matrix(self) -> ToolDependencyMatrix:
+        """
+        Return the tool design structure matrix (DSM).
+
+        Rows and columns follow ``tool_names`` order. A value at
+        ``matrix[producer, consumer]`` is one when the row tool supplies at
+        least one artifact to the column tool, and zero otherwise. The
+        diagonal is always one. With tools in execution order, feedforward
+        dependencies appear above the diagonal and feedback dependencies
+        appear below it.
+        """
+        tool_graph = self.to_tool_dependency_graph()
+        tool_names = tuple(self.tool_names)
+        tool_indices = {
+            tool_name: index
+            for index, tool_name in enumerate(tool_names)
+        }
+        matrix = np.zeros(
+            (len(tool_names), len(tool_names)),
+            dtype=np.int64,
+        )
+
+        for producer_name, consumer_name in tool_graph.edges:
+            matrix[
+                tool_indices[producer_name],
+                tool_indices[consumer_name],
+            ] = 1
+
+        np.fill_diagonal(matrix, 1)
+
+        return ToolDependencyMatrix(
+            matrix=matrix,
+            tool_names=tool_names,
+        )
 
     def producer_conflicts(self) -> dict[str, list[str]]:
         """
@@ -61,7 +161,9 @@ class Network(
         return conflicts
 
     def has_producer_conflicts(self) -> bool:
-        """Return whether any artifact has more than one producer tool."""
+        """
+        Return whether any artifact has more than one producer tool.
+        """
         return bool(self.producer_conflicts())
 
     def add_tool(self, tool: Tool):
@@ -113,5 +215,7 @@ if __name__ == "__main__":
     network.add_tool(tool_4)
 
     print(network.producer_conflicts())
+    dsm = network.to_tool_dependency_matrix()
+    print(dsm.matrix, dsm.tool_names)
 
     network.show()

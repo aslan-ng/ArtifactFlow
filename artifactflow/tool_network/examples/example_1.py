@@ -1,3 +1,7 @@
+"""
+Tool Network (without any filtering)
+"""
+
 from artifactflow.tool_network import ToolNetwork
 from artifactflow.tool.examples import tool_1, tool_2, tool_3, tool_4
 

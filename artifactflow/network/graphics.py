@@ -1,17 +1,23 @@
+from pathlib import Path
+
 import networkx as nx
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 
 class Graphics:
     G: nx.DiGraph
 
-    def show(self):
+    def _create_figure(
+        self,
+        seed: int = 42,
+    ) -> Figure:
         if not self.G:
             raise ValueError("The tool network is empty.")
 
         positions = nx.spring_layout(
             self.G,
-            seed=42,
+            seed=seed,
         )
 
         tool_nodes = [
@@ -26,7 +32,7 @@ class Graphics:
             if data["type"] == "artifact"
         ]
 
-        _, ax = plt.subplots(figsize=(10, 7))
+        fig, ax = plt.subplots(figsize=(14, 10))
 
         nx.draw_networkx_nodes(
             self.G,
@@ -71,11 +77,30 @@ class Graphics:
         nx.draw_networkx_labels(
             self.G,
             positions,
-            font_color="white",
+            font_color="black",
             font_size=9,
             ax=ax,
         )
 
         ax.set_axis_off()
-        plt.tight_layout()
+        fig.tight_layout()
+        return fig
+
+    def show(
+        self,
+        seed: int = 42,
+    ) -> None:
+        self._create_figure(seed=seed)
         plt.show()
+
+    def savefig(
+        self,
+        path: str | Path,
+        seed: int = 42,
+    ) -> None:
+        fig = self._create_figure(seed=seed)
+
+        try:
+            fig.savefig(path)
+        finally:
+            plt.close(fig)

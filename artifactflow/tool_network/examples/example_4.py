@@ -1,5 +1,5 @@
 """
-Tool Network is filtered only based on starting artifact
+Tool Network is filtered based on both starting and target artifact
 """
 
 from artifactflow.tool_network import ToolNetwork
@@ -13,6 +13,7 @@ for tool in tools:
 
 tool_network = tool_network.filter(
     starting_artifacts=["Artifact 1"],
+    target_artifacts=["Artifact 5"],
 )
 
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import artifactflow as af
 
 
@@ -39,4 +41,12 @@ for tool in tools:
 
 
 if __name__ == "__main__":
-    tool_network.show()
+    seed = 29
+    output_path = Path(__file__).parent / "results" / "tool_network.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tool_network.savefig(
+        path=output_path,
+        seed=seed,
+    )
+    tool_network.show(seed=seed)
