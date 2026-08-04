@@ -1,9 +1,15 @@
 from __future__ import annotations
+
+from copy import deepcopy
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from artifactflow.network.network import Network
 from artifactflow.tool.compatibility.tools_compatibility import tool_readiness
 from artifactflow.similarity.qap import QAPStudy
+
+if TYPE_CHECKING:
+    from artifactflow.tool_network.tool_network import ToolNetwork
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +236,35 @@ class Workflow(
             },
         )
         return study.correlation("Workflow A", "Workflow B")
+
+    def __add__(
+        self,
+        other: Workflow,
+    ) -> ToolNetwork:
+        from artifactflow.tool_network.tool_network import ToolNetwork
+
+        if not isinstance(other, Workflow):
+            raise TypeError(
+                "other must be a Workflow."
+            )
+        result = ToolNetwork()
+
+        if self.starting_artifacts is not None and \
+        other.starting_artifacts is not None:
+            if self.starting_artifacts == other.starting_artifacts:
+                result.starting_artifacts = deepcopy(self.starting_artifacts)
+        if self.target_artifacts is not None and \
+        other.target_artifacts is not None:
+            if self.target_artifacts == other.target_artifacts:
+                result.target_artifacts = deepcopy(self.target_artifacts)
+        
+        for tool in self.tools:
+            result.add_tool(tool)
+        for tool in other.tools:
+            if tool.name not in result.tool_names:
+                result.add_tool(tool)
+
+        return result
 
 
 if __name__ == "__main__":

@@ -90,6 +90,45 @@ class TestToolNetworkDiscover(unittest.TestCase):
             [["first", "second"], ["first"]],
         )
 
+    def test_same_start_and_target_requires_a_cycle(self):
+        boundary = Artifact("boundary")
+        intermediate = Artifact("intermediate")
+        unrelated_output = Artifact("unrelated output")
+        advance = Tool(
+            "advance",
+            inputs=[boundary],
+            outputs=[intermediate],
+        )
+        return_to_boundary = Tool(
+            "return",
+            inputs=[intermediate, unrelated_output],
+            outputs=[boundary],
+        )
+        incomplete = Tool(
+            "incomplete",
+            inputs=[boundary],
+            outputs=[unrelated_output],
+        )
+        network = make_tool_network(
+            advance,
+            return_to_boundary,
+            incomplete,
+        )
+        filtered = network.filter(
+            starting_artifacts=["boundary"],
+            target_artifacts=["boundary"],
+        )
+
+        discovered_tool_names = [
+            workflow.tool_names
+            for workflow in filtered.discover()
+        ]
+
+        self.assertIn(["advance", "return"], discovered_tool_names)
+        self.assertNotIn(["incomplete"], discovered_tool_names)
+        self.assertNotIn(["advance"], discovered_tool_names)
+        self.assertNotIn(["return"], discovered_tool_names)
+
     def test_remembered_included_tools_are_present_in_every_workflow(self):
         network = make_tool_network(self.tool_a, self.tool_b)
 
@@ -156,6 +195,73 @@ class TestToolNetworkDiscover(unittest.TestCase):
             ),
             [],
         )
+
+
+class TestToolNetworkAddition(unittest.TestCase):
+    def setUp(self):
+        shared = Artifact("shared")
+        self.tool_a = Tool("A", outputs=[shared])
+        self.tool_b = Tool("B", inputs=[shared])
+
+    def test_adds_a_workflow_without_mutating_either_operand(self):
+        network = make_tool_network(self.tool_a)
+        workflow = Workflow()
+        workflow.add_tool(self.tool_b)
+
+        combined = network + workflow
+
+        self.assertIsInstance(combined, ToolNetwork)
+        self.assertEqual(combined.tool_names, ["A", "B"])
+        self.assertEqual(network.tool_names, ["A"])
+        self.assertEqual(workflow.tool_names, ["B"])
+
+    def test_adds_another_tool_network(self):
+        left = make_tool_network(self.tool_a)
+        right = make_tool_network(self.tool_b)
+
+        combined = left + right
+
+        self.assertEqual(combined.tool_names, ["A", "B"])
+
+    def test_deduplicates_equivalent_tools_by_name(self):
+        duplicate_a = Tool(
+            "A",
+            outputs=[Artifact("shared")],
+        )
+        left = make_tool_network(self.tool_a)
+        right = make_tool_network(duplicate_a, self.tool_b)
+
+        combined = left + right
+
+        self.assertEqual(combined.tool_names, ["A", "B"])
+
+    def test_left_definition_wins_for_duplicate_tool_names(self):
+        left = make_tool_network(self.tool_a)
+        right = make_tool_network(
+            Tool("A", outputs=[Artifact("different")])
+        )
+
+        combined = left + right
+
+        self.assertEqual(combined.tool_names, ["A"])
+        self.assertEqual(
+            [artifact.name for artifact in combined.tools[0].outputs],
+            ["shared"],
+        )
+
+    def test_resets_filter_memory(self):
+        left = make_tool_network(self.tool_a)
+        left.starting_artifacts = ["shared"]
+        left.target_artifacts = ["shared"]
+        left.include_tools = ["A"]
+        left.exclude_tools = ["B"]
+
+        combined = left + make_tool_network(self.tool_b)
+
+        self.assertIsNone(combined.starting_artifacts)
+        self.assertIsNone(combined.target_artifacts)
+        self.assertIsNone(combined.include_tools)
+        self.assertIsNone(combined.exclude_tools)
 
 
 if __name__ == "__main__":

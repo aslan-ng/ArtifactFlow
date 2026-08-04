@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 from itertools import combinations
-
 import networkx as nx
 from copy import deepcopy
 
 from artifactflow.similarity.qap import QAPStudy
 from artifactflow.network.network import Network
 from artifactflow.workflow.workflow import Workflow
+
+
+def _has_positive_length_path(
+    graph: nx.DiGraph,
+    start: str,
+    target: str,
+) -> bool:
+    """Return whether a directed path traverses at least one edge."""
+    if start != target:
+        return nx.has_path(graph, start, target)
+
+    return any(
+        nx.has_path(graph, successor, target)
+        for successor in graph.successors(start)
+    )
 
 
 class ToolNetwork(
@@ -21,6 +35,50 @@ class ToolNetwork(
         self.target_artifacts: list[str] | None = None
         self.include_tools: list[str] | None = None
         self.exclude_tools: list[str] | None = None
+
+    def __add__(
+        self,
+        other: ToolNetwork | Workflow,
+    ) -> ToolNetwork:
+        """
+        Return a new tool network containing the union of both operands.
+
+        The right operand may be a Workflow or ToolNetwork. Tool order is
+        preserved from the left operand, followed by new tools from the right
+        operand. Filter memory is intentionally reset on the returned network.
+        """
+        if not isinstance(other, (Workflow, ToolNetwork)):
+            raise ValueError("incompatible format")
+
+        result = ToolNetwork()
+        for tool in self.tools:
+            result.add_tool(tool)
+        for tool in other.tools:
+            if tool.name not in result.tool_names:
+                result.add_tool(tool)
+        
+        return result
+
+    def __sub__(
+        self,
+        other: ToolNetwork | Workflow,
+    ) -> ToolNetwork:
+        """
+        Return a new tool network.
+
+        The right operand may be a Workflow or ToolNetwork. Tool order is
+        preserved from the left operand, followed by new tools from the right
+        operand. Filter memory is NOT reset on the returned network.
+        """
+        if not isinstance(other, (Workflow, ToolNetwork)):
+            raise ValueError("incompatible format")
+
+        result = deepcopy(self)
+        for tool in other.tools:
+            if tool.name in result.tool_names:
+                result.remove_tool(tool.name)
+        
+        return result
 
     def to_workflow(self) -> Workflow:
         """
@@ -204,9 +262,26 @@ class ToolNetwork(
                 if not set(target_artifacts) <= workflow.G.nodes:
                     continue
 
+                targets_are_produced = all(
+                    any(
+                        workflow.G.nodes[producer_name].get("type") == "tool"
+                        for producer_name in workflow.G.predecessors(
+                            target_artifact
+                        )
+                    )
+                    for target_artifact in target_artifacts
+                )
+
+                if not targets_are_produced:
+                    continue
+
                 if starting_artifacts and target_artifacts:
                     has_all_paths = all(
-                        nx.has_path(workflow.G, start, target)
+                        _has_positive_length_path(
+                            workflow.G,
+                            start,
+                            target,
+                        )
                         for start in starting_artifacts
                         for target in target_artifacts
                     )

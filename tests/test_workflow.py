@@ -4,6 +4,7 @@ import numpy as np
 
 from artifactflow.artifact.artifact import Artifact
 from artifactflow.tool.tool import Tool
+from artifactflow.tool_network.tool_network import ToolNetwork
 from artifactflow.workflow.workflow import Workflow
 
 
@@ -212,6 +213,20 @@ class TestWorkflowSimilarityScore(unittest.TestCase):
             self.long_workflow.similarity_score(self.short_workflow),
         )
         self.assertTrue(np.isfinite(score))
+
+
+class TestWorkflowAddition(unittest.TestCase):
+    def test_returns_a_tool_network_without_a_circular_import(self):
+        first = make_workflow(Tool("first"))
+        second = make_workflow(Tool("second"))
+        first.starting_artifacts = ["start"]
+        second.starting_artifacts = ["start"]
+
+        combined = first + second
+
+        self.assertIsInstance(combined, ToolNetwork)
+        self.assertEqual(combined.tool_names, ["first", "second"])
+        self.assertEqual(combined.starting_artifacts, ["start"])
 
 
 if __name__ == "__main__":
