@@ -19,8 +19,16 @@ class Network(
         self.G = nx.DiGraph()
 
     @property
-    def tool_names(self):
+    def tool_names(self) -> list[str]:
         return [tool.name for tool in self.tools]
+
+    @property
+    def artifact_names(self) -> list[str]:
+        return [
+            node
+            for node, data in self.G.nodes(data=True)
+            if data.get("type") == "artifact"
+        ]
 
     def producer_conflicts(self) -> dict[str, list[str]]:
         """

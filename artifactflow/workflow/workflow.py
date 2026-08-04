@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from artifactflow.network.network import Network
 from artifactflow.tool.compatibility.tools_compatibility import tool_readiness
-from artifactflow.utils.qap import QAPStudy
+from artifactflow.similarity.qap import QAPStudy
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +34,22 @@ class WorkflowInputRequirements:
             and not self.unreplenished_bootstrap_artifacts
         )
 
+    def __str__(self):
+        return f'''
+            "External Artifacts": {list(self.external_artifacts)},
+            "Bootstrap Artifacts": {list(self.bootstrap_artifacts)},
+        '''
+
 
 class Workflow(
     Network,
 ):
+
+    def __init__(self):
+        super().__init__()
+
+        self.starting_artifacts: list[str] | None = None
+        self.target_artifacts: list[str] | None = None
 
     def input_requirements(
         self,

@@ -1,6 +1,6 @@
 import networkx as nx
 
-from artifactflow.utils.qap.qap import QAP
+from artifactflow.similarity.qap.qap import QAP
 
 
 workflow_a = nx.DiGraph()

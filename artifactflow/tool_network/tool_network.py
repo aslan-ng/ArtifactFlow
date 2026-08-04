@@ -3,8 +3,9 @@ from __future__ import annotations
 from itertools import combinations
 
 import networkx as nx
+from copy import deepcopy
 
-from artifactflow.utils.qap import QAPStudy
+from artifactflow.similarity.qap import QAPStudy
 from artifactflow.network.network import Network
 from artifactflow.workflow.workflow import Workflow
 
@@ -212,6 +213,9 @@ class ToolNetwork(
 
                     if not has_all_paths:
                         continue
+
+                workflow.starting_artifacts = deepcopy(self.starting_artifacts)
+                workflow.target_artifacts = deepcopy(self.target_artifacts)
 
                 workflows.append(workflow)
 

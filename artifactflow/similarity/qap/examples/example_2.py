@@ -1,5 +1,5 @@
-from artifactflow.utils.qap.qap import QAP
-from artifactflow.workflow.tool_network import ToolNetwork
+from artifactflow.similarity.qap.qap import QAP
+from artifactflow.tool_network.tool_network import ToolNetwork
 from artifactflow.tool.examples import (
     tool_1,
     tool_2,

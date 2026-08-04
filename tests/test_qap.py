@@ -5,7 +5,7 @@ import numpy as np
 
 from artifactflow.tool.examples import tool_1, tool_2, tool_3, tool_4
 from artifactflow.tool_network.tool_network import ToolNetwork
-from artifactflow.utils.qap.qap import QAP, QAPStudy, qap_compare
+from artifactflow.similarity.qap.qap import QAP, QAPStudy, qap_compare
 
 
 def make_tool_network(*tools):
