@@ -10,6 +10,7 @@ from artifactflow.project.log import (
     Log,
     ProjectEvent,
     TargetsAccepted,
+    ToolFailed,
     ToolSucceeded,
 )
 from artifactflow.tool.tool import Tool
@@ -23,6 +24,7 @@ class ProjectState:
     available_artifacts: frozenset[str]
     produced_artifacts: frozenset[str]
     successful_tools: tuple[str, ...]
+    failed_attempts: tuple[str, ...]
     targets_accepted: bool
 
 
@@ -71,6 +73,7 @@ class Project:
         available_artifacts: set[str] = set()
         produced_artifacts: set[str] = set()
         successful_tools: list[str] = []
+        failed_attempts: list[str] = []
         targets_accepted = False
 
         for event in self.log:
@@ -92,6 +95,8 @@ class Project:
                 available_artifacts.update(output_names)
                 produced_artifacts.update(output_names)
                 successful_tools.append(tool.name)
+            elif isinstance(event, ToolFailed):
+                failed_attempts.append(event.tool_name)
             elif isinstance(event, TargetsAccepted):
                 targets_accepted = True
 
@@ -99,6 +104,7 @@ class Project:
             available_artifacts=frozenset(available_artifacts),
             produced_artifacts=frozenset(produced_artifacts),
             successful_tools=tuple(successful_tools),
+            failed_attempts=tuple(failed_attempts),
             targets_accepted=targets_accepted,
         )
 
@@ -116,6 +122,15 @@ class Project:
         """Record a tool after its call has succeeded."""
         self.tool(tool_name)
         self.log.tool_succeeded(tool_name)
+
+    def record_tool_failure(
+        self,
+        tool_name: str,
+        reason: str | None = None,
+    ) -> None:
+        """Record one failed attempt to run a tool."""
+        self.tool(tool_name)
+        self.log.tool_failed(tool_name, reason)
 
     def record_target_acceptance(self) -> None:
         """Record external acceptance of the current target artifacts."""

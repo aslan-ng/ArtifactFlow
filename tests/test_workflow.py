@@ -178,6 +178,35 @@ class TestWorkflowInputRequirements(unittest.TestCase):
             self.cycle.input_requirements(["missing"])
 
 
+class TestFollowingTools(unittest.TestCase):
+    def test_returns_immediate_structural_options_in_workflow_order(self):
+        start = Artifact("start")
+        after_a = Artifact("after A")
+        after_b = Artifact("after B")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("A", inputs=[start], outputs=[after_a]),
+            Tool("B", inputs=[after_a], outputs=[after_b]),
+            Tool("C", inputs=[after_a], outputs=[target]),
+            Tool("D", inputs=[after_a], outputs=[target]),
+            Tool("E", inputs=[after_b], outputs=[target]),
+            Tool("F", inputs=[after_b], outputs=[target]),
+        )
+
+        self.assertEqual(workflow.following_tools("A"), ("B", "C", "D"))
+        self.assertEqual(workflow.following_tools("B"), ("E", "F"))
+        self.assertEqual(
+            workflow.following_tools(["A", "B"]),
+            ("B", "C", "D", "E", "F"),
+        )
+
+    def test_rejects_unknown_tools(self):
+        workflow = make_workflow(Tool("known"))
+
+        with self.assertRaisesRegex(ValueError, "Unknown tools"):
+            workflow.following_tools("missing")
+
+
 class TestWorkflowSimilarityScore(unittest.TestCase):
     def setUp(self):
         artifact_x = Artifact("x")

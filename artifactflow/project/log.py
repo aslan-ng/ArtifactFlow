@@ -21,11 +21,24 @@ class ToolSucceeded:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolFailed:
+    """One attempt to run a workflow tool failed."""
+
+    tool_name: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TargetsAccepted:
     """The current target artifacts passed the project's acceptance checks."""
 
 
-ProjectEvent = ArtifactAvailable | ToolSucceeded | TargetsAccepted
+ProjectEvent = (
+    ArtifactAvailable
+    | ToolSucceeded
+    | ToolFailed
+    | TargetsAccepted
+)
 
 
 class Log:
@@ -41,7 +54,12 @@ class Log:
     def append(self, event: ProjectEvent) -> None:
         if not isinstance(
             event,
-            (ArtifactAvailable, ToolSucceeded, TargetsAccepted),
+            (
+                ArtifactAvailable,
+                ToolSucceeded,
+                ToolFailed,
+                TargetsAccepted,
+            ),
         ):
             raise TypeError("A project log only accepts project events.")
         self._events.append(event)
@@ -53,6 +71,14 @@ class Log:
     def tool_succeeded(self, tool_name: str) -> None:
         """Record a successful tool call."""
         self.append(ToolSucceeded(tool_name))
+
+    def tool_failed(
+        self,
+        tool_name: str,
+        reason: str | None = None,
+    ) -> None:
+        """Record one failed tool call."""
+        self.append(ToolFailed(tool_name, reason))
 
     def targets_accepted(self) -> None:
         """Record that the current target artifacts were accepted."""

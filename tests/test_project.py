@@ -7,6 +7,7 @@ from artifactflow.project.log import (
     ArtifactAvailable,
     Log,
     TargetsAccepted,
+    ToolFailed,
     ToolSucceeded,
 )
 from artifactflow.tool.tool import Tool
@@ -33,6 +34,7 @@ class TestLog(unittest.TestCase):
 
         log.artifact_available("A")
         log.tool_succeeded("first")
+        log.tool_failed("second", "simulated failure")
         log.targets_accepted()
 
         self.assertEqual(
@@ -40,6 +42,7 @@ class TestLog(unittest.TestCase):
             (
                 ArtifactAvailable("A"),
                 ToolSucceeded("first"),
+                ToolFailed("second", "simulated failure"),
                 TargetsAccepted(),
             ),
         )
@@ -69,6 +72,17 @@ class TestProjectAndUser(unittest.TestCase):
         self.assertEqual(project.state.successful_tools, ("first",))
         self.assertEqual(project.available_artifacts, {"A", "B"})
         self.assertEqual(project.state.produced_artifacts, {"B"})
+
+    def test_project_records_failed_attempts(self):
+        project = Project(self.workflow)
+
+        project.record_tool_failure("first", "simulated failure")
+
+        self.assertEqual(project.state.failed_attempts, ("first",))
+        self.assertEqual(
+            project.events,
+            (ToolFailed("first", "simulated failure"),),
+        )
 
     def test_user_records_external_contributions(self):
         project = Project(self.workflow)
@@ -397,6 +411,170 @@ class TestPartialCycle(unittest.TestCase):
         linear_project.record_tool_success("linear target")
 
         self.assertEqual(linear_advisor.advise().status, "COMPLETE")
+
+
+class TestRecovery(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        fork = Artifact("fork")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("prepare", inputs=[start], outputs=[fork]),
+            Tool("primary", inputs=[fork], outputs=[target]),
+            Tool("backup", inputs=[fork], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_retries_then_uses_a_sibling_option(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+        project.record_tool_success("prepare")
+
+        project.record_tool_failure("primary", "first failure")
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.options[0].tool_name, "primary")
+        self.assertEqual(command.options[0].action, "RETRY")
+        self.assertEqual(command.recovery.last_failed_tool, "primary")
+        self.assertEqual(command.recovery.last_failure_reason, "first failure")
+
+        project.record_tool_failure("primary", "retry failure")
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.options[0].tool_name, "backup")
+        self.assertEqual(command.options[0].action, "ALTERNATIVE")
+        self.assertEqual(
+            command.recovery.exhausted_options,
+            ("primary",),
+        )
+
+        project.record_tool_failure("backup", "first failure")
+        self.assertEqual(advisor.advise().options[0].action, "RETRY")
+
+        project.record_tool_success("backup")
+        self.assertEqual(advisor.advise().status, "COMPLETE")
+
+    def test_returns_blocked_after_every_option_and_retry_fail(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+        project.record_tool_success("prepare")
+
+        for tool_name in ("primary", "primary", "backup", "backup"):
+            project.record_tool_failure(tool_name, "simulated failure")
+
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "BLOCKED")
+        self.assertEqual(command.options, ())
+        self.assertEqual(command.recovery.last_failed_tool, "backup")
+
+    def test_failed_continuation_rejects_the_old_target_candidate(self):
+        start = Artifact("start")
+        draft = Artifact("draft")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("write", inputs=[start], outputs=[draft]),
+            Tool("evaluate", inputs=[draft], outputs=[start, target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project)
+        project.record_tool_success("write")
+        project.record_tool_success("evaluate")
+        self.assertEqual(advisor.advise().target_artifacts, ("target",))
+
+        project.record_tool_failure("write", "simulated failure")
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.target_artifacts, ())
+
+        User(project).accept_targets()
+        with self.assertRaisesRegex(ValueError, "before they are produced"):
+            advisor.advise()
+
+    def test_a_new_cycle_visit_receives_a_new_retry(self):
+        start = Artifact("start")
+        draft = Artifact("draft")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("write", inputs=[start], outputs=[draft]),
+            Tool("evaluate", inputs=[draft], outputs=[start, target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project)
+        project.record_tool_success("write")
+        project.record_tool_success("evaluate")
+
+        project.record_tool_failure("write", "first cycle failure")
+        self.assertEqual(advisor.advise().options[0].action, "RETRY")
+        project.record_tool_success("write")
+        project.record_tool_success("evaluate")
+
+        project.record_tool_failure("write", "second cycle failure")
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.options[0].action, "RETRY")
+
+
+class TestRecoveryBacktracking(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        after_a = Artifact("after A")
+        after_b = Artifact("after B")
+        supplied = Artifact("supplied")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("A", inputs=[start], outputs=[after_a]),
+            Tool("B", inputs=[after_a], outputs=[after_b]),
+            Tool("C", inputs=[after_a, supplied], outputs=[target]),
+            Tool("D", inputs=[after_a], outputs=[target]),
+            Tool("E", inputs=[after_b], outputs=[target]),
+            Tool("F", inputs=[after_b], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_restores_the_nearest_earlier_decision(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+        user = User(project)
+        project.record_tool_success("A")
+        project.record_tool_success("B")
+        user.provide("supplied")
+
+        for tool_name in ("E", "E", "F", "F"):
+            project.record_tool_failure(tool_name, "simulated failure")
+
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(
+            [option.tool_name for option in command.options],
+            ["C", "D"],
+        )
+        self.assertEqual(
+            [option.action for option in command.options],
+            ["ALTERNATIVE", "ALTERNATIVE"],
+        )
+        self.assertEqual(command.recovery.backtrack_depth, 1)
+        self.assertEqual(command.recovery.exhausted_options, ("B",))
+        self.assertEqual(command.options[0].required_artifacts, ())
+
+        project.record_tool_success("C")
+        self.assertEqual(advisor.advise().status, "COMPLETE")
+        self.assertIn("B", project.state.successful_tools)
+        self.assertEqual(
+            project.state.failed_attempts,
+            ("E", "E", "F", "F"),
+        )
 
 
 if __name__ == "__main__":

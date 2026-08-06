@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -56,6 +57,35 @@ class Workflow(
 
         self.starting_artifacts: list[str] | None = None
         self.target_artifacts: list[str] | None = None
+
+    def following_tools(
+        self,
+        tool_names: str | Iterable[str],
+    ) -> tuple[str, ...]:
+        """Return tools that consume an output of the given tool or tools."""
+        names = (
+            (tool_names,)
+            if isinstance(tool_names, str)
+            else tuple(tool_names)
+        )
+        unknown = set(names) - set(self.tool_names)
+        if unknown:
+            raise ValueError(f"Unknown tools: {sorted(unknown)}")
+
+        output_artifacts = {
+            artifact.name
+            for tool in self.tools
+            if tool.name in names
+            for artifact in tool.outputs
+        }
+        return tuple(
+            tool.name
+            for tool in self.tools
+            if any(
+                artifact.name in output_artifacts
+                for artifact in tool.inputs
+            )
+        )
 
     def input_requirements(
         self,

@@ -1,3 +1,3 @@
-from .advisor import Advisor, AdvisorCommand, ToolOption
+from .advisor import Advisor, AdvisorCommand, RecoveryContext, ToolOption
 
-__all__ = ["Advisor", "AdvisorCommand", "ToolOption"]
+__all__ = ["Advisor", "AdvisorCommand", "RecoveryContext", "ToolOption"]
