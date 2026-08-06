@@ -1,9 +1,16 @@
 import unittest
 
+from artifactflow.advisor import Advisor
 from artifactflow.artifact.artifact import Artifact
-from artifactflow.project.log import ArtifactAvailable, Log, ToolSucceeded
-from artifactflow.project.project import Project
+from artifactflow.project import Project
+from artifactflow.project.log import (
+    ArtifactAvailable,
+    Log,
+    TargetsAccepted,
+    ToolSucceeded,
+)
 from artifactflow.tool.tool import Tool
+from artifactflow.user import User
 from artifactflow.workflow.workflow import Workflow
 
 
@@ -26,14 +33,62 @@ class TestLog(unittest.TestCase):
 
         log.artifact_available("A")
         log.tool_succeeded("first")
+        log.targets_accepted()
 
         self.assertEqual(
             log.events,
-            (ArtifactAvailable("A"), ToolSucceeded("first")),
+            (
+                ArtifactAvailable("A"),
+                ToolSucceeded("first"),
+                TargetsAccepted(),
+            ),
         )
 
 
-class TestProjectAdvisor(unittest.TestCase):
+class TestProjectAndUser(unittest.TestCase):
+    def setUp(self):
+        a = Artifact("A")
+        b = Artifact("B")
+        self.workflow = make_workflow(
+            Tool("first", inputs=[a], outputs=[b]),
+            starting=["A"],
+            target=["B"],
+        )
+
+    def test_project_starts_with_an_empty_history(self):
+        project = Project(self.workflow)
+
+        self.assertEqual(project.events, ())
+        self.assertEqual(project.available_artifacts, frozenset())
+
+    def test_project_records_tool_facts(self):
+        project = Project(self.workflow)
+
+        project.record_tool_success("first")
+
+        self.assertEqual(project.state.successful_tools, ("first",))
+        self.assertEqual(project.available_artifacts, {"A", "B"})
+        self.assertEqual(project.state.produced_artifacts, {"B"})
+
+    def test_user_records_external_contributions(self):
+        project = Project(self.workflow)
+        user = User(project)
+
+        user.provide("A")
+        project.record_tool_success("first")
+        user.accept_targets()
+
+        self.assertEqual(
+            project.events,
+            (
+                ArtifactAvailable("A"),
+                ToolSucceeded("first"),
+                TargetsAccepted(),
+            ),
+        )
+
+
+class TestAdvisor(unittest.TestCase):
     def setUp(self):
         a = Artifact("A")
         b = Artifact("B")
@@ -49,19 +104,32 @@ class TestProjectAdvisor(unittest.TestCase):
         )
 
     def test_finds_mandatory_bootstrap_artifacts(self):
-        project = Project(self.workflow)
+        advisor = Advisor(Project(self.workflow))
 
-        self.assertEqual(project.bootstrap_artifacts, ("A", "C"))
+        self.assertEqual(advisor.bootstrap_artifacts, ("A", "C"))
         self.assertEqual(
-            project.mandatory_bootstrap_artifacts,
+            advisor.mandatory_bootstrap_artifacts,
             ("A", "C"),
         )
-        self.assertEqual(project.conditional_bootstrap_artifacts, ())
+        self.assertEqual(advisor.conditional_bootstrap_artifacts, ())
+
+    def test_a_boundary_input_does_not_make_a_downstream_tool_start(self):
+        project = Project(
+            self.workflow,
+            starting_artifacts=["A", "C"],
+        )
+        advisor = Advisor(project)
+
+        self.assertEqual(advisor.bootstrap_artifacts, ("A", "C"))
+        self.assertEqual(
+            [option.tool_name for option in advisor.advise().options],
+            ["first"],
+        )
 
     def test_advises_requirements_and_future_bootstrap(self):
-        project = Project(self.workflow)
+        advisor = Advisor(Project(self.workflow))
 
-        command = project.advise()
+        command = advisor.advise()
 
         self.assertEqual(command.status, "COMMAND")
         self.assertEqual(
@@ -69,32 +137,33 @@ class TestProjectAdvisor(unittest.TestCase):
             ["first"],
         )
         self.assertEqual(
-            [
-                requirement.artifact_name
-                for requirement in command.options[0].required_artifacts
-            ],
-            ["A"],
+            command.options[0].required_artifacts,
+            ("A",),
         )
-        self.assertEqual(
-            [suggestion.artifact_name for suggestion in command.suggestions],
-            ["C"],
-        )
+        self.assertEqual(command.suggested_artifacts, ("C",))
 
     def test_successful_tools_advance_the_advisor(self):
         project = Project(self.workflow)
+        advisor = Advisor(project)
 
-        project.log.tool_succeeded("first")
-        command = project.advise()
+        project.record_tool_success("first")
+        command = advisor.advise()
 
         self.assertEqual(command.options[0].tool_name, "second")
         self.assertEqual(
-            command.options[0].required_artifacts[0].artifact_name,
-            "C",
+            command.options[0].required_artifacts,
+            ("C",),
         )
 
-        project.log.tool_succeeded("second")
-        project.log.tool_succeeded("third")
-        command = project.advise()
+        project.record_tool_success("second")
+        project.record_tool_success("third")
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "COMMAND")
+        self.assertEqual(command.target_artifacts, ("result",))
+
+        User(project).accept_targets()
+        command = advisor.advise()
 
         self.assertEqual(command.status, "COMPLETE")
         self.assertEqual(command.target_artifacts, ("result",))
@@ -102,26 +171,32 @@ class TestProjectAdvisor(unittest.TestCase):
 
     def test_an_early_artifact_removes_its_suggestion_and_requirement(self):
         project = Project(self.workflow)
+        advisor = Advisor(project)
+        user = User(project)
 
-        project.log.artifact_available("C")
-        command = project.advise()
-        self.assertEqual(command.suggestions, ())
+        user.provide("C")
+        command = advisor.advise()
+        self.assertEqual(command.suggested_artifacts, ())
 
-        project.log.tool_succeeded("first")
-        command = project.advise()
+        project.record_tool_success("first")
+        command = advisor.advise()
         self.assertEqual(command.options[0].required_artifacts, ())
 
-    def test_target_must_be_produced_not_merely_available(self):
-        project = Project(self.workflow, ready_artifacts=["result"])
+    def test_external_target_does_not_complete_the_project(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
 
-        self.assertEqual(project.advise().status, "COMMAND")
+        User(project).provide("result")
+
+        self.assertEqual(advisor.advise().status, "COMMAND")
 
     def test_rejects_a_tool_that_was_not_an_option(self):
         project = Project(self.workflow)
-        project.log.tool_succeeded("second")
+        advisor = Advisor(project)
+        project.record_tool_success("second")
 
         with self.assertRaisesRegex(ValueError, "not an advised option"):
-            project.advise()
+            advisor.advise()
 
 
 class TestAlternativeRoutes(unittest.TestCase):
@@ -139,31 +214,32 @@ class TestAlternativeRoutes(unittest.TestCase):
         )
 
     def test_separates_mandatory_and_conditional_bootstrap(self):
-        project = Project(self.workflow)
+        advisor = Advisor(Project(self.workflow))
 
-        self.assertEqual(project.bootstrap_artifacts, ("start", "left seed"))
-        self.assertEqual(project.mandatory_bootstrap_artifacts, ("start",))
+        self.assertEqual(advisor.bootstrap_artifacts, ("start", "left seed"))
         self.assertEqual(
-            project.conditional_bootstrap_artifacts,
+            advisor.mandatory_bootstrap_artifacts,
+            ("start",),
+        )
+        self.assertEqual(
+            advisor.conditional_bootstrap_artifacts,
             ("left seed",),
         )
 
     def test_returns_route_options_with_local_requirements(self):
         project = Project(self.workflow)
-        project.log.tool_succeeded("start")
+        advisor = Advisor(project)
+        project.record_tool_success("start")
 
-        command = project.advise()
+        command = advisor.advise()
 
         self.assertEqual(
             [option.tool_name for option in command.options],
             ["left", "right"],
         )
         self.assertEqual(
-            [
-                requirement.artifact_name
-                for requirement in command.options[0].required_artifacts
-            ],
-            ["left seed"],
+            command.options[0].required_artifacts,
+            ("left seed",),
         )
         self.assertEqual(command.options[1].required_artifacts, ())
 
@@ -190,16 +266,14 @@ class TestBootstrapSuggestionAfterRouteChoice(unittest.TestCase):
             target=["target"],
         )
         project = Project(workflow)
-        project.log.tool_succeeded("start")
-        project.log.tool_succeeded("choose left")
+        advisor = Advisor(project)
+        project.record_tool_success("start")
+        project.record_tool_success("choose left")
 
-        command = project.advise()
+        command = advisor.advise()
 
         self.assertEqual(command.options[0].tool_name, "middle")
-        self.assertEqual(
-            [suggestion.artifact_name for suggestion in command.suggestions],
-            ["late seed"],
-        )
+        self.assertEqual(command.suggested_artifacts, ("late seed",))
 
 
 class TestPartialCycle(unittest.TestCase):
@@ -217,20 +291,112 @@ class TestPartialCycle(unittest.TestCase):
             target=["target"],
         )
         project = Project(workflow)
+        advisor = Advisor(project)
 
-        project.log.tool_succeeded("setup")
-        project.log.tool_succeeded("review")
+        project.record_tool_success("setup")
+        project.record_tool_success("review")
+        command = advisor.advise()
+        self.assertEqual(command.target_artifacts, ())
         self.assertEqual(
-            [option.tool_name for option in project.advise().options],
+            [option.tool_name for option in command.options],
             ["revise", "publish"],
         )
 
-        project.log.tool_succeeded("revise")
-        self.assertEqual(project.advise().options[0].tool_name, "review")
+        project.record_tool_success("revise")
+        self.assertEqual(advisor.advise().options[0].tool_name, "review")
 
-        project.log.tool_succeeded("review")
-        project.log.tool_succeeded("publish")
-        self.assertEqual(project.advise().status, "COMPLETE")
+        project.record_tool_success("review")
+        project.record_tool_success("publish")
+        self.assertEqual(advisor.advise().status, "COMPLETE")
+
+    def test_targets_can_be_accepted_or_the_cycle_can_continue(self):
+        start = Artifact("start")
+        draft = Artifact("draft")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("draft", inputs=[start], outputs=[draft]),
+            Tool("evaluate", inputs=[draft], outputs=[start, target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project)
+        user = User(project)
+        project.record_tool_success("draft")
+        project.record_tool_success("evaluate")
+
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "COMMAND")
+        self.assertEqual(command.target_artifacts, ("target",))
+        self.assertEqual(command.options[0].tool_name, "draft")
+
+        project.record_tool_success("draft")
+        self.assertEqual(advisor.advise().target_artifacts, ())
+
+        project.record_tool_success("evaluate")
+        user.accept_targets()
+        self.assertEqual(advisor.advise().status, "COMPLETE")
+
+    def test_targets_cannot_be_accepted_before_they_are_produced(self):
+        start = Artifact("start")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("finish", inputs=[start], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project)
+        User(project).accept_targets()
+
+        with self.assertRaisesRegex(ValueError, "before they are produced"):
+            advisor.advise()
+
+    def test_linear_target_completes_without_acceptance(self):
+        start = Artifact("start")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("finish", inputs=[start], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project)
+        project.record_tool_success("finish")
+
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "COMPLETE")
+        self.assertEqual(command.options, ())
+
+    def test_acceptance_depends_on_the_selected_target_route(self):
+        start = Artifact("start")
+        work = Artifact("work")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("start", inputs=[start], outputs=[work]),
+            Tool("cyclic target", inputs=[work], outputs=[work, target]),
+            Tool("linear target", inputs=[work], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+        cyclic_project = Project(workflow)
+        cyclic_advisor = Advisor(cyclic_project)
+        cyclic_project.record_tool_success("start")
+        cyclic_project.record_tool_success("cyclic target")
+
+        cyclic_command = cyclic_advisor.advise()
+        self.assertEqual(cyclic_command.status, "COMMAND")
+        self.assertEqual(cyclic_command.target_artifacts, ("target",))
+
+        linear_project = Project(workflow)
+        linear_advisor = Advisor(linear_project)
+        linear_project.record_tool_success("start")
+        linear_project.record_tool_success("linear target")
+
+        self.assertEqual(linear_advisor.advise().status, "COMPLETE")
 
 
 if __name__ == "__main__":

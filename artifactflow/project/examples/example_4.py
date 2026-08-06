@@ -1,7 +1,7 @@
-"""Provide every possible bootstrap artifact before starting."""
+"""Choose the cyclic route in a workflow that also has a linear route."""
 
 from artifactflow import Advisor, Project, User
-from artifactflow.workflow.examples import workflow_1 as workflow
+from artifactflow.workflow.examples import workflow_3 as workflow
 
 
 project = Project(
@@ -16,13 +16,13 @@ print("All possible bootstrap:", advisor.bootstrap_artifacts)
 print("Always needed:", advisor.mandatory_bootstrap_artifacts)
 print("Route-dependent:", advisor.conditional_bootstrap_artifacts)
 
-user.provide(*advisor.bootstrap_artifacts)
-
 target_attempt = 0
 target_attempts_before_acceptance = 3
 command = advisor.advise()
 
 while command.status == "COMMAND":
+    print("Options:", tuple(option.tool_name for option in command.options))
+
     if command.target_artifacts:
         target_attempt += 1
         print(
@@ -38,9 +38,17 @@ while command.status == "COMMAND":
             command = advisor.advise()
             continue
 
-        print("Continue the target-producing cycle.")
-
     option = command.options[0]
+    for candidate in command.options:
+        if candidate.tool_name == "Tool 2":
+            option = candidate
+            print("Choose the cyclic route instead of terminal Tool 4.")
+            break
+
+    if option.required_artifacts:
+        print("Provide for this route:", option.required_artifacts)
+        user.provide(*option.required_artifacts)
+
     print("Use:", option.tool_name)
     project.record_tool_success(option.tool_name)
     command = advisor.advise()

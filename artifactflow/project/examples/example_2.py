@@ -1,29 +1,49 @@
-"""Obtain bootstrap artifacts only when the selected tool needs them."""
+"""Provide bootstrap artifacts only when the chosen tool needs them."""
 
-from artifactflow.project.project import Project
+from artifactflow import Advisor, Project, User
 from artifactflow.workflow.examples import workflow_1 as workflow
 
 
-workflow.show()
-
 project = Project(
-    workflow=workflow,
-    starting_artifacts=["Artifact 1"],
+    workflow,
+    starting_artifacts=["Artifact 1", "Artifact 3"],
     target_artifacts=["Artifact 5"],
 )
+advisor = Advisor(project)
+user = User(project)
 
-command = project.advise()
+target_attempt = 0
+target_attempts_before_acceptance = 3
+command = advisor.advise()
+
 while command.status == "COMMAND":
-    print("Suggestions:", command.suggestions)
+    print("Suggestions for later:", command.suggested_artifacts)
     print("Options:", command.options)
 
-    option = command.options[0]
-    for requirement in option.required_artifacts:
-        # Obtain the artifact from the user. Other sources can be added later.
-        project.log.artifact_available(requirement.artifact_name)
+    if command.target_artifacts:
+        target_attempt += 1
+        print(
+            "Target candidate:",
+            target_attempt,
+            "of",
+            target_attempts_before_acceptance,
+        )
 
-    # Run option.tool_name until success. The runtime then records the event.
-    project.log.tool_succeeded(option.tool_name)
-    command = project.advise()
+        if target_attempt == target_attempts_before_acceptance:
+            print("Accept the target candidate.")
+            user.accept_targets()
+            command = advisor.advise()
+            continue
+
+        print("Continue the target-producing cycle.")
+
+    option = command.options[0]
+    if option.required_artifacts:
+        print("Provide now:", option.required_artifacts)
+        user.provide(*option.required_artifacts)
+
+    print("Use:", option.tool_name)
+    project.record_tool_success(option.tool_name)
+    command = advisor.advise()
 
 print(command.message)

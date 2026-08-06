@@ -1,4 +1,4 @@
-"""Provide every possible bootstrap artifact before starting."""
+"""Accept the third target candidate in a refinement cycle."""
 
 from artifactflow import Advisor, Project, User
 from artifactflow.workflow.examples import workflow_1 as workflow
@@ -12,33 +12,22 @@ project = Project(
 advisor = Advisor(project)
 user = User(project)
 
-print("All possible bootstrap:", advisor.bootstrap_artifacts)
-print("Always needed:", advisor.mandatory_bootstrap_artifacts)
-print("Route-dependent:", advisor.conditional_bootstrap_artifacts)
-
 user.provide(*advisor.bootstrap_artifacts)
 
 target_attempt = 0
-target_attempts_before_acceptance = 3
 command = advisor.advise()
 
 while command.status == "COMMAND":
     if command.target_artifacts:
         target_attempt += 1
-        print(
-            "Target candidate:",
-            target_attempt,
-            "of",
-            target_attempts_before_acceptance,
-        )
 
-        if target_attempt == target_attempts_before_acceptance:
-            print("Accept the target candidate.")
+        if target_attempt == 3:
+            print("Accept candidate:", target_attempt)
             user.accept_targets()
             command = advisor.advise()
             continue
 
-        print("Continue the target-producing cycle.")
+        print("Reject candidate:", target_attempt)
 
     option = command.options[0]
     print("Use:", option.tool_name)
