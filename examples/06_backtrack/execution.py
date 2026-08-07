@@ -1,32 +1,42 @@
 """Exhaust a nested branch, then restore an earlier decision point."""
 
-from artifactflow import Advisor, Project, User
+from artifactflow import (
+    Advisor,
+    ArtifactAvailable,
+    Project,
+    ToolFailed,
+    ToolSucceeded,
+)
 
 from workflow import workflow
 
 
 project = Project(workflow)
-advisor = Advisor(project)
-user = User(project)
-
-print("Always needed:", advisor.mandatory_bootstrap_artifacts)
-print("Needed only on some routes:", advisor.conditional_bootstrap_artifacts)
-
-command = advisor.advise()
-user.provide(*command.options[0].required_artifacts)
-print("Run: Prepare -> success")
-project.record_tool_success("Prepare")
-
-command = advisor.advise()
-print(
-    "Decision after Prepare:",
-    tuple(option.tool_name for option in command.options),
+advisor = Advisor(
+    project,
+    lookahead_depth=2,
+    max_options=None,
 )
-print("Choose: Detailed route -> success")
-project.record_tool_success("Detailed route")
 
-# Both detailed engines fail once and fail again on their retries. This
-# exhausts the detailed branch and returns to the earlier route choice.
+command = advisor.advise()
+prepare = command.options[0]
+print("After Prepare, the preview shows:")
+for route in prepare.continuations:
+    print(" -", route.tool_name, "may need", route.missing_artifacts)
+
+for artifact_name in prepare.missing_artifacts:
+    command = advisor.advise(ArtifactAvailable(artifact_name))
+command = advisor.advise(ToolSucceeded("Prepare"))
+
+print("\nExecutable route choices:")
+for option in command.options:
+    print(" -", option.tool_name, "needs", option.missing_artifacts)
+
+print("Choose: Detailed route -> success")
+command = advisor.advise(ToolSucceeded("Detailed route"))
+
+# Both detailed engines fail once and fail again on their retries. The first
+# failure also exposes the unchecked sibling engine as an alternative.
 failed_attempts = (
     "Detailed engine one",
     "Detailed engine one",
@@ -35,26 +45,38 @@ failed_attempts = (
 )
 
 for failed_tool in failed_attempts:
-    command = advisor.advise()
     chosen_option = next(
         option
         for option in command.options
         if option.tool_name == failed_tool
     )
-    print(command.status + ":", chosen_option.action, failed_tool, "-> failure")
-    project.record_tool_failure(failed_tool, "simulated failure")
+    print(
+        command.status + ":",
+        chosen_option.action,
+        failed_tool,
+        "-> failure",
+    )
+    command = advisor.advise(
+        ToolFailed(failed_tool, "simulated failure")
+    )
+    if command.status == "RECOVERY":
+        print(
+            " Advisor now offers:",
+            tuple(
+                (option.action, option.tool_name)
+                for option in command.options
+            ),
+        )
 
-command = advisor.advise()
-print("The detailed branch is exhausted.")
+print("\nThe detailed branch is exhausted.")
 assert command.recovery is not None
 print("Backtrack depth:", command.recovery.backtrack_depth)
-print("Exhausted earlier choice:", command.recovery.exhausted_options)
 print(
     "Restored alternatives:",
     tuple(option.tool_name for option in command.options),
 )
 print(
-    "Detailed route is still recorded as successful history:",
+    "Detailed route remains in the factual history:",
     "Detailed route" in project.state.successful_tools,
 )
 
@@ -63,10 +85,11 @@ chosen_option = next(
     for option in command.options
     if option.tool_name == "Concise route"
 )
-print("Concise route now needs:", chosen_option.required_artifacts)
-user.provide(*chosen_option.required_artifacts)
-print("Run: Concise route -> success")
-project.record_tool_success("Concise route")
+print("Concise route now needs:", chosen_option.missing_artifacts)
 
-command = advisor.advise()
+for artifact_name in chosen_option.missing_artifacts:
+    print("The user provides:", artifact_name)
+    command = advisor.advise(ArtifactAvailable(artifact_name))
+
+command = advisor.advise(ToolSucceeded("Concise route"))
 print(command.status + ":", command.message)

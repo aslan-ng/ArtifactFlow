@@ -1,6 +1,6 @@
 """Accept the third target candidate in a refinement cycle."""
 
-from artifactflow import Advisor, Project, User
+from artifactflow import Advisor, Project, ToolSucceeded, User
 from artifactflow.workflow.examples import workflow_1 as workflow
 
 
@@ -31,7 +31,6 @@ while command.status == "COMMAND":
 
     option = command.options[0]
     print("Use:", option.tool_name)
-    project.record_tool_success(option.tool_name)
-    command = advisor.advise()
+    command = advisor.advise(ToolSucceeded(option.tool_name))
 
 print(command.message)

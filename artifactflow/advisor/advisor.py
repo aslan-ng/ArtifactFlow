@@ -7,6 +7,7 @@ from typing import Literal
 
 from artifactflow.project.log import (
     ArtifactAvailable,
+    ProjectEvent,
     TargetsAccepted,
     ToolFailed,
     ToolSucceeded,
@@ -15,14 +16,31 @@ from artifactflow.project.project import Project
 from artifactflow.tool.tool import Tool
 
 
+ToolAction = Literal["RUN", "RETRY", "ALTERNATIVE"]
+ToolOutcome = Literal[
+    "CONTINUE",
+    "TARGETS_READY",
+    "COMPLETE",
+    "DEAD_END",
+]
+CommandStatus = Literal["COMMAND", "RECOVERY", "COMPLETE", "BLOCKED"]
+
+
 @dataclass(frozen=True, slots=True)
 class ToolOption:
-    """One tool the caller may choose next."""
+    """An executable root tool or a future tool shown in its preview.
+
+    Only options directly inside ``AdvisorCommand.options`` are executable.
+    Nested ``continuations`` show what may follow if their parent succeeds.
+    """
 
     tool_name: str
-    input_artifacts: tuple[str, ...]
-    required_artifacts: tuple[str, ...]
-    action: Literal["RUN", "RETRY", "ALTERNATIVE"] = "RUN"
+    missing_artifacts: tuple[str, ...] = ()
+    action: ToolAction = "RUN"
+    continuations: tuple[ToolOption, ...] = ()
+    outcome: ToolOutcome = "CONTINUE"
+    has_more: bool = False
+    options_truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,13 +57,13 @@ class RecoveryContext:
 class AdvisorCommand:
     """One self-contained direction returned by the Advisor."""
 
-    status: Literal["COMMAND", "RECOVERY", "COMPLETE", "BLOCKED"]
+    status: CommandStatus
     options: tuple[ToolOption, ...] = ()
-    suggested_artifacts: tuple[str, ...] = ()
+    options_truncated: bool = False
     target_artifacts: tuple[str, ...] = ()
+    target_acceptance_required: bool = False
     recovery: RecoveryContext | None = None
     message: str = ""
-    return_when: str | None = None
 
 
 @dataclass(slots=True)
@@ -67,7 +85,6 @@ class _DecisionFrame:
     exhausted_options: set[str] = field(default_factory=set)
     failure_counts: dict[str, int] = field(default_factory=dict)
     selected_option: str | None = None
-    retry_tool: str | None = None
 
 
 @dataclass(slots=True)
@@ -86,19 +103,46 @@ class _ReplayState:
 
 class Advisor:
     """
-    Read a project and say what should happen next.
+    Record observed events and say what may happen next.
 
-    ``advise`` is the single method intended for a future MCP tool. Several
-    tool options are alternative route choices, not parallel work.
+    ``advise`` is the single method intended for a future MCP tool. Root
+    options are executable alternatives. Their nested continuations are
+    success-assuming previews controlled by ``lookahead_depth`` and are not
+    executable yet. ``max_options`` limits the visible breadth at each
+    decision point.
 
-    After a failed tool call, the Advisor permits one retry. A second failure
-    exhausts that option. The Advisor then offers unchecked siblings or
-    restores the nearest earlier decision point. A target candidate requires
-    acceptance only when a continuation can produce a fresh candidate.
+    After a failure, the Advisor offers the retry first and then unchecked
+    siblings when breadth permits. Two failures exhaust one option. Once the
+    current decision is exhausted, recovery restores the nearest earlier
+    decision with alternatives. A target candidate requires acceptance only
+    when a continuation can produce a fresh candidate.
     """
 
-    def __init__(self, project: Project) -> None:
+    def __init__(
+        self,
+        project: Project,
+        lookahead_depth: int = 1,
+        max_options: int | None = None,
+    ) -> None:
+        if isinstance(lookahead_depth, bool) or not isinstance(
+            lookahead_depth,
+            int,
+        ):
+            raise TypeError("lookahead_depth must be an integer.")
+        if lookahead_depth < 1:
+            raise ValueError("lookahead_depth must be at least 1.")
+        if max_options is not None:
+            if isinstance(max_options, bool) or not isinstance(
+                max_options,
+                int,
+            ):
+                raise TypeError("max_options must be an integer or None.")
+            if max_options < 1:
+                raise ValueError("max_options must be at least 1 or None.")
+
         self.project = project
+        self.lookahead_depth = lookahead_depth
+        self.max_options = max_options
         self._tool_positions = {
             tool.name: position
             for position, tool in enumerate(project.workflow.tools)
@@ -138,9 +182,31 @@ class Advisor:
         """Return bootstrap artifacts required only by some routes."""
         return self._conditional_bootstrap_artifacts
 
-    def advise(self) -> AdvisorCommand:
-        """Return the next direction based on the complete project log."""
+    def advise(
+        self,
+        report: ProjectEvent | None = None,
+    ) -> AdvisorCommand:
+        """Record one observed event, then return the current direction.
+
+        Calling without a report is read-only. Tool reports are accepted only
+        for visible root options; nested continuation previews cannot be
+        executed directly.
+        """
         replay = self._replay_log()
+
+        if report is None:
+            return self._build_command(replay)
+
+        self._validate_report(report, replay)
+        next_replay = self._replay_events((*self.project.events, report))
+        command = self._build_command(next_replay)
+
+        # Append only after validation and advice construction succeed.
+        self.project.log.append(report)
+        return command
+
+    def _build_command(self, replay: _ReplayState) -> AdvisorCommand:
+        """Build advice from one reconstructed project state."""
         state = replay.active
         targets_ready = self._targets_ready(state)
         acceptance_required = self._acceptance_required(state)
@@ -165,13 +231,14 @@ class Advisor:
                 ),
             )
 
-        tool_names = self._available_options(replay)
-        if not tool_names:
+        eligible_tool_names = self._eligible_options(replay)
+        if not eligible_tool_names:
             return AdvisorCommand(
                 status="BLOCKED",
                 message="No tool can continue the project.",
             )
 
+        tool_names = self._limit_options(eligible_tool_names)
         status: Literal["COMMAND", "RECOVERY"] = (
             "RECOVERY"
             if replay.recovering
@@ -180,83 +247,62 @@ class Advisor:
         options = tuple(
             self._tool_option(
                 tool_name,
-                state.available_artifacts,
+                state,
                 self._tool_action(replay, tool_name),
+                self.lookahead_depth,
             )
             for tool_name in tool_names
         )
 
-        command_state = self._copy_state(state)
-        command_state.next_tools = tool_names
-        required_now = {
-            artifact_name
-            for option in options
-            for artifact_name in option.required_artifacts
-        }
-        remaining_routes = self._bootstrap_routes(command_state)
-        mandatory_later: set[str] = set()
-        if remaining_routes:
-            mandatory_later = set.intersection(
-                *(set(route) for route in remaining_routes)
-            )
-        suggested_artifacts = self.project.ordered_artifacts(
-            mandatory_later
-            - state.available_artifacts
-            - required_now
-        )
-
         if status == "RECOVERY":
             recovery = self._recovery_context(replay)
-            if options[0].action == "RETRY":
-                message = (
-                    "The tool failed. Retry it once, then report whether "
-                    "the retry succeeds or fails."
-                )
-            elif replay.backtrack_depth:
+            if replay.backtrack_depth:
                 message = (
                     "The current branch is exhausted. Choose an alternative "
                     "from the nearest earlier decision point."
                 )
             else:
                 message = (
-                    "The tool and its retry failed. Choose another option "
-                    "from the same decision point."
+                    "Choose a retry or another option from the current "
+                    "decision point."
                 )
-            return_when = "after one listed tool succeeds or fails"
         elif targets_ready:
             recovery = None
             message = (
                 "The target artifacts are ready. Accept them if they meet "
                 "the project conditions, or choose a tool to continue."
             )
-            return_when = (
-                "after accepting the targets or one listed tool succeeds "
-                "or fails"
-            )
         else:
             recovery = None
             message = (
-                "Choose one tool, obtain its required artifacts, and run it "
-                "once. Record whether it succeeds or fails, then ask for "
-                "advice again."
+                "Choose one root tool, obtain its missing artifacts, and run "
+                "it once. Then report whether it succeeds or fails."
             )
-            return_when = "after one listed tool succeeds or fails"
 
         return AdvisorCommand(
             status=status,
             options=options,
-            suggested_artifacts=suggested_artifacts,
+            options_truncated=(
+                len(tool_names) < len(eligible_tool_names)
+            ),
             target_artifacts=(
                 self.project.target_artifacts
                 if targets_ready
                 else ()
             ),
+            target_acceptance_required=acceptance_required,
             recovery=recovery,
             message=message,
-            return_when=return_when,
         )
 
     def _replay_log(self) -> _ReplayState:
+        return self._replay_events(self.project.events)
+
+    def _replay_events(
+        self,
+        events: tuple[ProjectEvent, ...],
+    ) -> _ReplayState:
+        """Reconstruct active advice state from ordered factual events."""
         initial_state = self._initial_state()
         replay = _ReplayState(
             active=initial_state,
@@ -265,7 +311,7 @@ class Advisor:
         )
         self._push_decision(replay)
 
-        for event in self.project.events:
+        for event in events:
             if self._is_complete(replay.active):
                 raise ValueError(
                     "The project log contains work after completion."
@@ -275,20 +321,35 @@ class Advisor:
                     "The project log contains work after it became blocked."
                 )
 
+            if not isinstance(
+                event,
+                (
+                    ArtifactAvailable,
+                    ToolSucceeded,
+                    ToolFailed,
+                    TargetsAccepted,
+                ),
+            ):
+                raise TypeError("Advice reports must be project events.")
+
             if isinstance(event, ArtifactAvailable):
                 self._record_external_artifact(replay, event.artifact_name)
                 continue
 
             if isinstance(event, TargetsAccepted):
-                if not self._targets_ready(replay.active):
+                if not (
+                    self._targets_ready(replay.active)
+                    and self._acceptance_required(replay.active)
+                ):
                     raise ValueError(
                         "Target artifacts cannot be accepted before they "
-                        "are produced."
+                        "are produced or when no candidate is awaiting "
+                        "acceptance."
                     )
                 replay.active.targets_accepted = True
                 continue
 
-            allowed_tools = self._available_options(replay)
+            allowed_tools = self._eligible_options(replay)
             if event.tool_name not in allowed_tools:
                 raise ValueError(
                     f"Tool {event.tool_name!r} was not an advised option."
@@ -302,6 +363,31 @@ class Advisor:
                 self._record_success(replay, event.tool_name)
 
         return replay
+
+    def _validate_report(
+        self,
+        report: ProjectEvent,
+        replay: _ReplayState,
+    ) -> None:
+        """Reject unsupported or hidden tool reports before logging them."""
+        if not isinstance(
+            report,
+            (
+                ArtifactAvailable,
+                ToolSucceeded,
+                ToolFailed,
+                TargetsAccepted,
+            ),
+        ):
+            raise TypeError("Advice reports must be project events.")
+
+        if isinstance(report, (ToolSucceeded, ToolFailed)):
+            visible_tools = self._visible_options(replay)
+            if report.tool_name not in visible_tools:
+                raise ValueError(
+                    f"Tool {report.tool_name!r} was not a visible root "
+                    "option."
+                )
 
     def _record_external_artifact(
         self,
@@ -332,10 +418,8 @@ class Advisor:
         replay.backtrack_depth = 0
 
         if failure_count == 1:
-            decision.retry_tool = tool_name
             return
 
-        decision.retry_tool = None
         decision.exhausted_options.add(tool_name)
         if self._remaining_options(decision):
             replay.active = self._restore(decision, replay)
@@ -350,7 +434,6 @@ class Advisor:
     ) -> None:
         decision = replay.decisions[-1]
         decision.selected_option = tool_name
-        decision.retry_tool = None
 
         replay.active = self._after_tool(
             replay.active,
@@ -389,7 +472,6 @@ class Advisor:
 
             parent.exhausted_options.add(selected_branch)
             parent.selected_option = None
-            parent.retry_tool = None
             replay.active = self._restore(parent, replay)
 
             if self._remaining_options(parent):
@@ -490,19 +572,58 @@ class Advisor:
             )
         )
 
-    def _available_options(
+    def _eligible_options(
         self,
         replay: _ReplayState,
     ) -> tuple[str, ...]:
+        """Return every structurally valid root option in priority order."""
         if replay.blocked or not replay.decisions:
             return ()
 
         decision = replay.decisions[-1]
         if decision.selected_option is not None:
             return ()
-        if decision.retry_tool is not None:
-            return (decision.retry_tool,)
-        return self._remaining_options(decision)
+
+        remaining = self._remaining_options(decision)
+        if not replay.recovering:
+            return remaining
+
+        pending_retries = tuple(
+            tool_name
+            for tool_name in remaining
+            if decision.failure_counts.get(tool_name, 0) == 1
+        )
+        untried = tuple(
+            tool_name
+            for tool_name in remaining
+            if decision.failure_counts.get(tool_name, 0) == 0
+        )
+        latest_retry = (
+            (replay.last_failed_tool,)
+            if replay.last_failed_tool in pending_retries
+            else ()
+        )
+        other_retries = tuple(
+            tool_name
+            for tool_name in pending_retries
+            if tool_name != replay.last_failed_tool
+        )
+        return latest_retry + other_retries + untried
+
+    def _visible_options(
+        self,
+        replay: _ReplayState,
+    ) -> tuple[str, ...]:
+        """Return the eligible roots exposed by the breadth setting."""
+        return self._limit_options(self._eligible_options(replay))
+
+    def _limit_options(
+        self,
+        tool_names: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if self.max_options is None:
+            return tool_names
+        return tool_names[:self.max_options]
 
     @staticmethod
     def _remaining_options(
@@ -536,11 +657,11 @@ class Advisor:
         self,
         replay: _ReplayState,
         tool_name: str,
-    ) -> Literal["RUN", "RETRY", "ALTERNATIVE"]:
+    ) -> ToolAction:
         if not replay.recovering:
             return "RUN"
         decision = replay.decisions[-1]
-        if decision.retry_tool == tool_name:
+        if decision.failure_counts.get(tool_name, 0) == 1:
             return "RETRY"
         return "ALTERNATIVE"
 
@@ -566,23 +687,62 @@ class Advisor:
     def _tool_option(
         self,
         tool_name: str,
-        available_artifacts: set[str],
-        action: Literal["RUN", "RETRY", "ALTERNATIVE"],
+        state: _AdviceState,
+        action: ToolAction,
+        depth: int,
     ) -> ToolOption:
         tool = self.project.tool(tool_name)
         input_artifacts = tuple(
             artifact.name
             for artifact in tool.inputs
         )
+        next_state = self._after_tool(state, tool)
+        targets_ready = self._targets_ready(next_state)
+
+        if targets_ready and self._acceptance_required(next_state):
+            outcome: ToolOutcome = "TARGETS_READY"
+        elif targets_ready:
+            outcome = "COMPLETE"
+        elif not next_state.next_tools:
+            outcome = "DEAD_END"
+        else:
+            outcome = "CONTINUE"
+
+        can_continue = (
+            outcome in ("CONTINUE", "TARGETS_READY")
+            and bool(next_state.next_tools)
+        )
+        continuations: tuple[ToolOption, ...] = ()
+        options_truncated = False
+        has_more = can_continue and depth == 1
+
+        if can_continue and depth > 1:
+            next_tool_names = self._limit_options(next_state.next_tools)
+            options_truncated = (
+                len(next_tool_names) < len(next_state.next_tools)
+            )
+            continuations = tuple(
+                self._tool_option(
+                    next_tool_name,
+                    next_state,
+                    "RUN",
+                    depth - 1,
+                )
+                for next_tool_name in next_tool_names
+            )
+
         return ToolOption(
             tool_name=tool.name,
-            input_artifacts=input_artifacts,
-            required_artifacts=tuple(
+            missing_artifacts=tuple(
                 artifact_name
                 for artifact_name in input_artifacts
-                if artifact_name not in available_artifacts
+                if artifact_name not in state.available_artifacts
             ),
             action=action,
+            continuations=continuations,
+            outcome=outcome,
+            has_more=has_more,
+            options_truncated=options_truncated,
         )
 
     def _bootstrap_routes(

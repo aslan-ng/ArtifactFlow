@@ -140,8 +140,8 @@ class TestAdvisor(unittest.TestCase):
             ["first"],
         )
 
-    def test_advises_requirements_and_future_bootstrap(self):
-        advisor = Advisor(Project(self.workflow))
+    def test_lookahead_attaches_missing_artifacts_to_their_consumers(self):
+        advisor = Advisor(Project(self.workflow), lookahead_depth=2)
 
         command = advisor.advise()
 
@@ -151,10 +151,12 @@ class TestAdvisor(unittest.TestCase):
             ["first"],
         )
         self.assertEqual(
-            command.options[0].required_artifacts,
+            command.options[0].missing_artifacts,
             ("A",),
         )
-        self.assertEqual(command.suggested_artifacts, ("C",))
+        second = command.options[0].continuations[0]
+        self.assertEqual(second.tool_name, "second")
+        self.assertEqual(second.missing_artifacts, ("C",))
 
     def test_successful_tools_advance_the_advisor(self):
         project = Project(self.workflow)
@@ -165,7 +167,7 @@ class TestAdvisor(unittest.TestCase):
 
         self.assertEqual(command.options[0].tool_name, "second")
         self.assertEqual(
-            command.options[0].required_artifacts,
+            command.options[0].missing_artifacts,
             ("C",),
         )
 
@@ -175,6 +177,7 @@ class TestAdvisor(unittest.TestCase):
 
         self.assertEqual(command.status, "COMMAND")
         self.assertEqual(command.target_artifacts, ("result",))
+        self.assertTrue(command.target_acceptance_required)
 
         User(project).accept_targets()
         command = advisor.advise()
@@ -183,18 +186,21 @@ class TestAdvisor(unittest.TestCase):
         self.assertEqual(command.target_artifacts, ("result",))
         self.assertIn("result", project.available_artifacts)
 
-    def test_an_early_artifact_removes_its_suggestion_and_requirement(self):
+    def test_an_early_artifact_removes_the_future_requirement(self):
         project = Project(self.workflow)
-        advisor = Advisor(project)
+        advisor = Advisor(project, lookahead_depth=2)
         user = User(project)
 
         user.provide("C")
         command = advisor.advise()
-        self.assertEqual(command.suggested_artifacts, ())
+        self.assertEqual(
+            command.options[0].continuations[0].missing_artifacts,
+            (),
+        )
 
         project.record_tool_success("first")
         command = advisor.advise()
-        self.assertEqual(command.options[0].required_artifacts, ())
+        self.assertEqual(command.options[0].missing_artifacts, ())
 
     def test_external_target_does_not_complete_the_project(self):
         project = Project(self.workflow)
@@ -252,14 +258,14 @@ class TestAlternativeRoutes(unittest.TestCase):
             ["left", "right"],
         )
         self.assertEqual(
-            command.options[0].required_artifacts,
+            command.options[0].missing_artifacts,
             ("left seed",),
         )
-        self.assertEqual(command.options[1].required_artifacts, ())
+        self.assertEqual(command.options[1].missing_artifacts, ())
 
 
-class TestBootstrapSuggestionAfterRouteChoice(unittest.TestCase):
-    def test_conditional_bootstrap_becomes_a_suggestion(self):
+class TestBootstrapLookaheadAfterRouteChoice(unittest.TestCase):
+    def test_conditional_bootstrap_appears_on_its_future_consumer(self):
         start = Artifact("start")
         fork = Artifact("fork")
         left_output = Artifact("left output")
@@ -280,14 +286,16 @@ class TestBootstrapSuggestionAfterRouteChoice(unittest.TestCase):
             target=["target"],
         )
         project = Project(workflow)
-        advisor = Advisor(project)
+        advisor = Advisor(project, lookahead_depth=2)
         project.record_tool_success("start")
         project.record_tool_success("choose left")
 
         command = advisor.advise()
 
         self.assertEqual(command.options[0].tool_name, "middle")
-        self.assertEqual(command.suggested_artifacts, ("late seed",))
+        finish = command.options[0].continuations[0]
+        self.assertEqual(finish.tool_name, "finish left")
+        self.assertEqual(finish.missing_artifacts, ("late seed",))
 
 
 class TestPartialCycle(unittest.TestCase):
@@ -343,6 +351,7 @@ class TestPartialCycle(unittest.TestCase):
 
         self.assertEqual(command.status, "COMMAND")
         self.assertEqual(command.target_artifacts, ("target",))
+        self.assertTrue(command.target_acceptance_required)
         self.assertEqual(command.options[0].tool_name, "draft")
 
         project.record_tool_success("draft")
@@ -404,13 +413,16 @@ class TestPartialCycle(unittest.TestCase):
         cyclic_command = cyclic_advisor.advise()
         self.assertEqual(cyclic_command.status, "COMMAND")
         self.assertEqual(cyclic_command.target_artifacts, ("target",))
+        self.assertTrue(cyclic_command.target_acceptance_required)
 
         linear_project = Project(workflow)
         linear_advisor = Advisor(linear_project)
         linear_project.record_tool_success("start")
         linear_project.record_tool_success("linear target")
 
-        self.assertEqual(linear_advisor.advise().status, "COMPLETE")
+        linear_command = linear_advisor.advise()
+        self.assertEqual(linear_command.status, "COMPLETE")
+        self.assertFalse(linear_command.target_acceptance_required)
 
 
 class TestRecovery(unittest.TestCase):
@@ -566,7 +578,7 @@ class TestRecoveryBacktracking(unittest.TestCase):
         )
         self.assertEqual(command.recovery.backtrack_depth, 1)
         self.assertEqual(command.recovery.exhausted_options, ("B",))
-        self.assertEqual(command.options[0].required_artifacts, ())
+        self.assertEqual(command.options[0].missing_artifacts, ())
 
         project.record_tool_success("C")
         self.assertEqual(advisor.advise().status, "COMPLETE")
@@ -574,6 +586,397 @@ class TestRecoveryBacktracking(unittest.TestCase):
         self.assertEqual(
             project.state.failed_attempts,
             ("E", "E", "F", "F"),
+        )
+
+
+class TestAdviceReports(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("finish", inputs=[start], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_advise_records_one_report_and_returns_updated_advice(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+
+        first = advisor.advise()
+        repeated = advisor.advise()
+        self.assertEqual(first, repeated)
+        self.assertEqual(project.events, ())
+
+        command = advisor.advise(ArtifactAvailable("start"))
+        self.assertEqual(
+            project.events,
+            (ArtifactAvailable("start"),),
+        )
+        self.assertEqual(command.options[0].missing_artifacts, ())
+
+        command = advisor.advise(ToolSucceeded("finish"))
+        self.assertEqual(command.status, "COMPLETE")
+        self.assertEqual(
+            project.events,
+            (
+                ArtifactAvailable("start"),
+                ToolSucceeded("finish"),
+            ),
+        )
+
+    def test_invalid_report_does_not_change_the_log(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+
+        with self.assertRaisesRegex(ValueError, "visible root option"):
+            advisor.advise(ToolSucceeded("unknown"))
+
+        self.assertEqual(project.events, ())
+
+        with self.assertRaisesRegex(ValueError, "Unknown artifact"):
+            advisor.advise(ArtifactAvailable("unknown"))
+
+        self.assertEqual(project.events, ())
+
+    def test_rejects_an_unsupported_report_type(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+
+        with self.assertRaisesRegex(TypeError, "project events"):
+            advisor.advise("finish")  # type: ignore[arg-type]
+
+        self.assertEqual(project.events, ())
+
+    def test_rejects_a_tool_shown_only_in_the_preview(self):
+        start = Artifact("start")
+        middle = Artifact("middle")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("first", inputs=[start], outputs=[middle]),
+            Tool("future", inputs=[middle], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project, lookahead_depth=2)
+
+        self.assertEqual(
+            advisor.advise().options[0].continuations[0].tool_name,
+            "future",
+        )
+        with self.assertRaisesRegex(ValueError, "visible root option"):
+            advisor.advise(ToolSucceeded("future"))
+
+        self.assertEqual(project.events, ())
+
+
+class TestLookahead(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        first_output = Artifact("first output")
+        second_output = Artifact("second output")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("first", inputs=[start], outputs=[first_output]),
+            Tool(
+                "second",
+                inputs=[first_output],
+                outputs=[second_output],
+            ),
+            Tool("third", inputs=[second_output], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_depth_one_shows_only_the_executable_root(self):
+        command = Advisor(
+            Project(self.workflow),
+            lookahead_depth=1,
+        ).advise()
+
+        first = command.options[0]
+        self.assertEqual(first.tool_name, "first")
+        self.assertEqual(first.missing_artifacts, ("start",))
+        self.assertEqual(first.continuations, ())
+        self.assertTrue(first.has_more)
+        self.assertEqual(first.outcome, "CONTINUE")
+
+    def test_deeper_window_is_path_aware_and_reaches_the_target(self):
+        command = Advisor(
+            Project(self.workflow),
+            lookahead_depth=3,
+        ).advise()
+
+        first = command.options[0]
+        second = first.continuations[0]
+        third = second.continuations[0]
+
+        self.assertEqual(second.tool_name, "second")
+        self.assertEqual(second.missing_artifacts, ())
+        self.assertEqual(third.tool_name, "third")
+        self.assertEqual(third.missing_artifacts, ())
+        self.assertEqual(third.outcome, "COMPLETE")
+        self.assertFalse(third.has_more)
+
+    def test_middle_cycle_is_unfolded_only_to_the_selected_depth(self):
+        start = Artifact("start")
+        draft = Artifact("draft")
+        review = Artifact("review")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("setup", inputs=[start], outputs=[draft]),
+            Tool("review", inputs=[draft], outputs=[review]),
+            Tool("revise", inputs=[review], outputs=[draft]),
+            Tool("publish", inputs=[review], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        project.record_tool_success("setup")
+        project.record_tool_success("review")
+
+        command = Advisor(project, lookahead_depth=3).advise()
+        revise, publish = command.options
+        next_review = revise.continuations[0]
+
+        self.assertEqual(publish.outcome, "COMPLETE")
+        self.assertEqual(next_review.tool_name, "review")
+        self.assertEqual(
+            [option.tool_name for option in next_review.continuations],
+            ["revise", "publish"],
+        )
+        self.assertTrue(next_review.continuations[0].has_more)
+
+    def test_target_cycle_preview_and_reported_acceptance(self):
+        start = Artifact("start")
+        draft = Artifact("draft")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("write", inputs=[start], outputs=[draft]),
+            Tool("evaluate", inputs=[draft], outputs=[start, target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project, lookahead_depth=2)
+
+        command = advisor.advise()
+        evaluate = command.options[0].continuations[0]
+        self.assertEqual(evaluate.outcome, "TARGETS_READY")
+        self.assertTrue(evaluate.has_more)
+
+        advisor.advise(ToolSucceeded("write"))
+        command = advisor.advise(ToolSucceeded("evaluate"))
+        self.assertTrue(command.target_acceptance_required)
+        self.assertEqual(command.target_artifacts, ("target",))
+
+        command = advisor.advise(TargetsAccepted())
+        self.assertEqual(command.status, "COMPLETE")
+
+    def test_preview_marks_a_route_that_cannot_reach_the_target(self):
+        start = Artifact("start")
+        fork = Artifact("fork")
+        dead_output = Artifact("dead output")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("prepare", inputs=[start], outputs=[fork]),
+            Tool("dead route", inputs=[fork], outputs=[dead_output]),
+            Tool("finish", inputs=[fork], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+        command = Advisor(
+            Project(workflow),
+            lookahead_depth=2,
+        ).advise()
+
+        dead_route, finish = command.options[0].continuations
+        self.assertEqual(dead_route.outcome, "DEAD_END")
+        self.assertEqual(finish.outcome, "COMPLETE")
+
+
+class TestAdviceBreadth(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        fork = Artifact("fork")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("prepare", inputs=[start], outputs=[fork]),
+            Tool("first route", inputs=[fork], outputs=[target]),
+            Tool("second route", inputs=[fork], outputs=[target]),
+            Tool("third route", inputs=[fork], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_max_options_limits_each_visible_decision(self):
+        project = Project(self.workflow)
+        advisor = Advisor(
+            project,
+            lookahead_depth=2,
+            max_options=1,
+        )
+
+        command = advisor.advise()
+        prepare = command.options[0]
+        self.assertFalse(command.options_truncated)
+        self.assertEqual(
+            [option.tool_name for option in prepare.continuations],
+            ["first route"],
+        )
+        self.assertTrue(prepare.options_truncated)
+
+        command = advisor.advise(ToolSucceeded("prepare"))
+        self.assertEqual(
+            [option.tool_name for option in command.options],
+            ["first route"],
+        )
+        self.assertTrue(command.options_truncated)
+        self.assertEqual(command, advisor.advise())
+
+    def test_none_and_a_large_limit_return_every_option(self):
+        for limit in (None, 5):
+            project = Project(self.workflow)
+            project.record_tool_success("prepare")
+            command = Advisor(project, max_options=limit).advise()
+
+            self.assertEqual(
+                [option.tool_name for option in command.options],
+                ["first route", "second route", "third route"],
+            )
+            self.assertFalse(command.options_truncated)
+
+    def test_hidden_tool_report_is_rejected_without_changing_history(self):
+        project = Project(self.workflow)
+        project.record_tool_success("prepare")
+        advisor = Advisor(project, max_options=1)
+        original_events = project.events
+
+        with self.assertRaisesRegex(ValueError, "visible root option"):
+            advisor.advise(ToolSucceeded("second route"))
+
+        self.assertEqual(project.events, original_events)
+
+    def test_direct_history_is_not_invalidated_by_a_breadth_setting(self):
+        project = Project(self.workflow)
+        project.record_tool_success("prepare")
+        project.record_tool_success("second route")
+
+        command = Advisor(project, max_options=1).advise()
+
+        self.assertEqual(command.status, "COMPLETE")
+
+    def test_rejects_invalid_configuration(self):
+        for value in (0, -1):
+            with self.assertRaises(ValueError):
+                Advisor(Project(self.workflow), lookahead_depth=value)
+            with self.assertRaises(ValueError):
+                Advisor(Project(self.workflow), max_options=value)
+
+        for value in (True, 1.5, "2"):
+            with self.assertRaises(TypeError):
+                Advisor(Project(self.workflow), lookahead_depth=value)
+            with self.assertRaises(TypeError):
+                Advisor(Project(self.workflow), max_options=value)
+
+
+class TestRecoveryBreadth(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        fork = Artifact("fork")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("prepare", inputs=[start], outputs=[fork]),
+            Tool("primary", inputs=[fork], outputs=[target]),
+            Tool("backup", inputs=[fork], outputs=[target]),
+            Tool("third", inputs=[fork], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_failure_returns_retry_and_untried_siblings(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project, lookahead_depth=2)
+        advisor.advise(ToolSucceeded("prepare"))
+
+        command = advisor.advise(ToolFailed("primary", "failure"))
+
+        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(
+            [(option.tool_name, option.action) for option in command.options],
+            [
+                ("primary", "RETRY"),
+                ("backup", "ALTERNATIVE"),
+                ("third", "ALTERNATIVE"),
+            ],
+        )
+        self.assertTrue(all(
+            option.outcome == "COMPLETE"
+            for option in command.options
+        ))
+
+    def test_each_once_failed_option_remains_a_retry(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+        advisor.advise(ToolSucceeded("prepare"))
+        advisor.advise(ToolFailed("primary"))
+
+        command = advisor.advise(ToolFailed("backup"))
+
+        self.assertEqual(
+            [(option.tool_name, option.action) for option in command.options],
+            [
+                ("backup", "RETRY"),
+                ("primary", "RETRY"),
+                ("third", "ALTERNATIVE"),
+            ],
+        )
+
+    def test_max_one_recreates_retry_first_recovery(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project, max_options=1)
+        advisor.advise(ToolSucceeded("prepare"))
+
+        command = advisor.advise(ToolFailed("primary"))
+        self.assertEqual(command.options[0].tool_name, "primary")
+        self.assertEqual(command.options[0].action, "RETRY")
+        self.assertTrue(command.options_truncated)
+
+        command = advisor.advise(ToolFailed("primary"))
+        self.assertEqual(command.options[0].tool_name, "backup")
+        self.assertEqual(command.options[0].action, "ALTERNATIVE")
+        self.assertTrue(command.options_truncated)
+
+    def test_earlier_decisions_stay_closed_while_siblings_remain(self):
+        start = Artifact("start")
+        after_start = Artifact("after start")
+        branch_output = Artifact("branch output")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("start", inputs=[start], outputs=[after_start]),
+            Tool("branch", inputs=[after_start], outputs=[branch_output]),
+            Tool("earlier alternative", inputs=[after_start], outputs=[target]),
+            Tool("nested one", inputs=[branch_output], outputs=[target]),
+            Tool("nested two", inputs=[branch_output], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project)
+        advisor.advise(ToolSucceeded("start"))
+        advisor.advise(ToolSucceeded("branch"))
+
+        command = advisor.advise(ToolFailed("nested one"))
+
+        self.assertEqual(
+            [option.tool_name for option in command.options],
+            ["nested one", "nested two"],
+        )
+        self.assertNotIn(
+            "earlier alternative",
+            [option.tool_name for option in command.options],
         )
 
 

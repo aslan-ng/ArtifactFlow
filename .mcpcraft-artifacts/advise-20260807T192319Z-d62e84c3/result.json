@@ -1,0 +1,21 @@
+{
+  "message": "Choose one root tool, obtain its missing artifacts, and run it once. Then report whether it succeeds or fails.",
+  "options": [
+    {
+      "action": "RUN",
+      "continuations": [],
+      "has_more": false,
+      "missing_artifacts": [
+        "Brief"
+      ],
+      "options_truncated": false,
+      "outcome": "COMPLETE",
+      "tool_name": "Make result"
+    }
+  ],
+  "options_truncated": false,
+  "recovery": null,
+  "status": "COMMAND",
+  "target_acceptance_required": false,
+  "target_artifacts": []
+}
