@@ -1,24 +1,9 @@
 """Continue a target-producing cycle and accept its third candidate."""
 
-from artifactflow import Advisor, Artifact, Project, Tool, User, Workflow
+from artifactflow import Advisor, Project, User
 
+from workflow import workflow
 
-brief = Artifact("Brief")
-draft = Artifact("Draft")
-candidate = Artifact("Candidate report")
-
-write = Tool("Write draft", inputs=[brief], outputs=[draft])
-evaluate = Tool(
-    "Evaluate draft",
-    inputs=[draft],
-    outputs=[brief, candidate],
-)
-
-workflow = Workflow()
-workflow.add_tool(write)
-workflow.add_tool(evaluate)
-workflow.starting_artifacts = ["Brief"]
-workflow.target_artifacts = ["Candidate report"]
 
 project = Project(workflow)
 advisor = Advisor(project)
