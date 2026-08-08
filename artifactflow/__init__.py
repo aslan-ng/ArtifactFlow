@@ -4,6 +4,10 @@ from .tool_network import ToolNetwork
 from .workflow import Workflow
 from .project import (
     ArtifactAvailable,
+    ArtifactOutput,
+    ArtifactVersion,
+    ExecutionLog,
+    FileReference,
     Project,
     ProjectEvent,
     TargetsAccepted,
@@ -18,6 +22,10 @@ __all__ = [
     "AdvisorCommand",
     "Artifact",
     "ArtifactAvailable",
+    "ArtifactOutput",
+    "ArtifactVersion",
+    "ExecutionLog",
+    "FileReference",
     "Project",
     "ProjectEvent",
     "RecoveryContext",

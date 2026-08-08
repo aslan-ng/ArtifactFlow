@@ -1,12 +1,6 @@
 """Provide every possible bootstrap artifact before starting."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    TargetsAccepted,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_1 as workflow
 
 
@@ -23,7 +17,8 @@ print("Route-dependent:", advisor.conditional_bootstrap_artifacts)
 
 command = advisor.advise()
 for artifact_name in advisor.bootstrap_artifacts:
-    command = advisor.advise(ArtifactAvailable(artifact_name))
+    project.record_artifact_available(artifact_name)
+command = advisor.advise()
 
 target_attempt = 0
 target_attempts_before_acceptance = 3
@@ -39,13 +34,15 @@ while command.status == "COMMAND":
 
         if target_attempt == target_attempts_before_acceptance:
             print("Accept the target candidate.")
-            command = advisor.advise(TargetsAccepted())
+            project.record_target_acceptance()
+            command = advisor.advise()
             continue
 
         print("Continue the target-producing cycle.")
 
     option = command.options[0]
     print("Use:", option.tool_name)
-    command = advisor.advise(ToolSucceeded(option.tool_name))
+    project.record_tool_success(option.tool_name)
+    command = advisor.advise()
 
 print(command.message)

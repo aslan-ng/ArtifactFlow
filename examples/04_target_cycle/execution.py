@@ -1,12 +1,6 @@
 """Continue a target-producing cycle and accept its third candidate."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    TargetsAccepted,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 
 from workflow import workflow
 
@@ -18,7 +12,8 @@ command = advisor.advise()
 print("First tool:", command.options[0].tool_name)
 print("Provide first:", command.options[0].missing_artifacts)
 for artifact_name in command.options[0].missing_artifacts:
-    command = advisor.advise(ArtifactAvailable(artifact_name))
+    project.record_artifact_available(artifact_name)
+command = advisor.advise()
 
 candidate_number = 0
 
@@ -30,7 +25,8 @@ while command.status == "COMMAND":
 
         if candidate_number == 3:
             print("The simulated user accepts this candidate.")
-            command = advisor.advise(TargetsAccepted())
+            project.record_target_acceptance()
+            command = advisor.advise()
             continue
 
         print("The candidate is not accepted; continue the cycle.")
@@ -48,6 +44,7 @@ while command.status == "COMMAND":
             continuation.has_more,
         )
 
-    command = advisor.advise(ToolSucceeded(option.tool_name))
+    project.record_tool_success(option.tool_name)
+    command = advisor.advise()
 
 print("\n" + command.status + ":", command.message)

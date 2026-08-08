@@ -1,12 +1,6 @@
 """Choose the cyclic route in a workflow that also has a linear route."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    TargetsAccepted,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_3 as workflow
 
 
@@ -39,7 +33,8 @@ while command.status == "COMMAND":
 
         if target_attempt == target_attempts_before_acceptance:
             print("Accept the target candidate.")
-            command = advisor.advise(TargetsAccepted())
+            project.record_target_acceptance()
+            command = advisor.advise()
             continue
 
     option = command.options[0]
@@ -52,9 +47,11 @@ while command.status == "COMMAND":
     if option.missing_artifacts:
         print("Provide for this route:", option.missing_artifacts)
         for artifact_name in option.missing_artifacts:
-            command = advisor.advise(ArtifactAvailable(artifact_name))
+            project.record_artifact_available(artifact_name)
+        command = advisor.advise()
 
     print("Use:", option.tool_name)
-    command = advisor.advise(ToolSucceeded(option.tool_name))
+    project.record_tool_success(option.tool_name)
+    command = advisor.advise()
 
 print(command.message)

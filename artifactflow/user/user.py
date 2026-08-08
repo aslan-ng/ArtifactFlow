@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from artifactflow.project.log import ArtifactVersion, FileReference
 from artifactflow.project.project import Project
 
 
@@ -17,10 +18,19 @@ class User:
     def __init__(self, project: Project) -> None:
         self.project = project
 
-    def provide(self, *artifact_names: str) -> None:
-        """Make one or more external artifacts available to the project."""
-        for artifact_name in artifact_names:
-            self.project.record_artifact_available(artifact_name)
+    def provide(
+        self,
+        artifact_name: str,
+        *,
+        value: object | None = None,
+        file: FileReference | None = None,
+    ) -> ArtifactVersion:
+        """Record one external artifact, including its value or file."""
+        return self.project.record_artifact_available(
+            artifact_name,
+            value=value,
+            file=file,
+        )
 
     def accept_targets(self) -> None:
         """Accept the target artifacts currently presented for review."""

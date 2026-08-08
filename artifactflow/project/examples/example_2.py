@@ -1,12 +1,6 @@
 """Provide bootstrap artifacts only when the chosen tool needs them."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    TargetsAccepted,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_1 as workflow
 
 
@@ -47,7 +41,8 @@ while command.status == "COMMAND":
 
         if target_attempt == target_attempts_before_acceptance:
             print("Accept the target candidate.")
-            command = advisor.advise(TargetsAccepted())
+            project.record_target_acceptance()
+            command = advisor.advise()
             continue
 
         print("Continue the target-producing cycle.")
@@ -56,9 +51,11 @@ while command.status == "COMMAND":
     if option.missing_artifacts:
         print("Provide now:", option.missing_artifacts)
         for artifact_name in option.missing_artifacts:
-            command = advisor.advise(ArtifactAvailable(artifact_name))
+            project.record_artifact_available(artifact_name)
+        command = advisor.advise()
 
     print("Use:", option.tool_name)
-    command = advisor.advise(ToolSucceeded(option.tool_name))
+    project.record_tool_success(option.tool_name)
+    command = advisor.advise()
 
 print(command.message)

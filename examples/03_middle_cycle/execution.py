@@ -4,12 +4,7 @@ The three-review rule is only a deterministic simulation. A real LLM or
 human could decide whether to revise or publish by reading the review.
 """
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 
 from workflow import workflow
 
@@ -21,7 +16,8 @@ command = advisor.advise()
 print("First tool:", command.options[0].tool_name)
 print("Provide first:", command.options[0].missing_artifacts)
 for artifact_name in command.options[0].missing_artifacts:
-    command = advisor.advise(ArtifactAvailable(artifact_name))
+    project.record_artifact_available(artifact_name)
+command = advisor.advise()
 
 review_number = 0
 cycle_preview_shown = False
@@ -71,7 +67,8 @@ while command.status == "COMMAND":
         if option.tool_name == chosen_name
     )
     print("Run root tool:", chosen_option.tool_name)
-    command = advisor.advise(ToolSucceeded(chosen_option.tool_name))
+    project.record_tool_success(chosen_option.tool_name)
+    command = advisor.advise()
 
     if chosen_option.tool_name == "Review draft":
         review_number += 1

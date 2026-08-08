@@ -1,12 +1,6 @@
 """Exhaust a nested branch, then restore an earlier decision point."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    ToolFailed,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 
 from workflow import workflow
 
@@ -25,15 +19,17 @@ for route in prepare.continuations:
     print(" -", route.tool_name, "may need", route.missing_artifacts)
 
 for artifact_name in prepare.missing_artifacts:
-    command = advisor.advise(ArtifactAvailable(artifact_name))
-command = advisor.advise(ToolSucceeded("Prepare"))
+    project.record_artifact_available(artifact_name)
+project.record_tool_success("Prepare")
+command = advisor.advise()
 
 print("\nExecutable route choices:")
 for option in command.options:
     print(" -", option.tool_name, "needs", option.missing_artifacts)
 
 print("Choose: Detailed route -> success")
-command = advisor.advise(ToolSucceeded("Detailed route"))
+project.record_tool_success("Detailed route")
+command = advisor.advise()
 
 # Both detailed engines fail once and fail again on their retries. The first
 # failure also exposes the unchecked sibling engine as an alternative.
@@ -56,9 +52,8 @@ for failed_tool in failed_attempts:
         failed_tool,
         "-> failure",
     )
-    command = advisor.advise(
-        ToolFailed(failed_tool, "simulated failure")
-    )
+    project.record_tool_failure(failed_tool, "simulated failure")
+    command = advisor.advise()
     if command.status == "RECOVERY":
         print(
             " Advisor now offers:",
@@ -89,7 +84,8 @@ print("Concise route now needs:", chosen_option.missing_artifacts)
 
 for artifact_name in chosen_option.missing_artifacts:
     print("The user provides:", artifact_name)
-    command = advisor.advise(ArtifactAvailable(artifact_name))
+    project.record_artifact_available(artifact_name)
 
-command = advisor.advise(ToolSucceeded("Concise route"))
+project.record_tool_success("Concise route")
+command = advisor.advise()
 print(command.status + ":", command.message)

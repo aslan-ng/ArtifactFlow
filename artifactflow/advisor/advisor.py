@@ -7,6 +7,7 @@ from typing import Literal
 
 from artifactflow.project.log import (
     ArtifactAvailable,
+    ArtifactVersion,
     ProjectEvent,
     TargetsAccepted,
     ToolFailed,
@@ -71,7 +72,9 @@ class _AdviceState:
     """Active artifacts and tools at one point along the selected route."""
 
     available_artifacts: set[str]
+    active_artifacts: dict[str, ArtifactVersion]
     produced_artifacts: set[str]
+    target_candidates: dict[str, ArtifactVersion]
     next_tools: tuple[str, ...]
     targets_accepted: bool = False
 
@@ -93,7 +96,7 @@ class _ReplayState:
 
     active: _AdviceState
     decisions: list[_DecisionFrame]
-    external_artifacts: set[str]
+    external_artifacts: dict[str, ArtifactVersion]
     recovering: bool = False
     last_failed_tool: str | None = None
     last_failure_reason: str | None = None
@@ -103,7 +106,7 @@ class _ReplayState:
 
 class Advisor:
     """
-    Record observed events and say what may happen next.
+    Read observed execution events and say what may happen next.
 
     ``advise`` is the single method intended for a future MCP tool. Root
     options are executable alternatives. Their nested continuations are
@@ -182,28 +185,15 @@ class Advisor:
         """Return bootstrap artifacts required only by some routes."""
         return self._conditional_bootstrap_artifacts
 
-    def advise(
-        self,
-        report: ProjectEvent | None = None,
-    ) -> AdvisorCommand:
-        """Record one observed event, then return the current direction.
+    def advise(self) -> AdvisorCommand:
+        """Return current advice reconstructed from the execution log.
 
-        Calling without a report is read-only. Tool reports are accepted only
-        for visible root options; nested continuation previews cannot be
-        executed directly.
+        The method is intentionally read-only. A runtime observer, a raw-log
+        adapter, or a simulation records activity on the Project separately.
+        Therefore several tool calls may occur between consultations without
+        breaking the connection to the Advisor.
         """
-        replay = self._replay_log()
-
-        if report is None:
-            return self._build_command(replay)
-
-        self._validate_report(report, replay)
-        next_replay = self._replay_events((*self.project.events, report))
-        command = self._build_command(next_replay)
-
-        # Append only after validation and advice construction succeed.
-        self.project.log.append(report)
-        return command
+        return self._build_command(self._replay_log())
 
     def _build_command(self, replay: _ReplayState) -> AdvisorCommand:
         """Build advice from one reconstructed project state."""
@@ -276,7 +266,7 @@ class Advisor:
             recovery = None
             message = (
                 "Choose one root tool, obtain its missing artifacts, and run "
-                "it once. Then report whether it succeeds or fails."
+                "it once. Ask for advice again after its result is recorded."
             )
 
         return AdvisorCommand(
@@ -307,7 +297,7 @@ class Advisor:
         replay = _ReplayState(
             active=initial_state,
             decisions=[],
-            external_artifacts=set(),
+            external_artifacts={},
         )
         self._push_decision(replay)
 
@@ -330,10 +320,10 @@ class Advisor:
                     TargetsAccepted,
                 ),
             ):
-                raise TypeError("Advice reports must be project events.")
+                raise TypeError("The execution log contains an invalid event.")
 
             if isinstance(event, ArtifactAvailable):
-                self._record_external_artifact(replay, event.artifact_name)
+                self._record_external_artifact(replay, event.artifact)
                 continue
 
             if isinstance(event, TargetsAccepted):
@@ -346,6 +336,16 @@ class Advisor:
                         "are produced or when no candidate is awaiting "
                         "acceptance."
                     )
+                if event.targets:
+                    active_targets = tuple(
+                        replay.active.target_candidates[name]
+                        for name in self.project.target_artifacts
+                    )
+                    if event.targets != active_targets:
+                        raise ValueError(
+                            "Target acceptance does not reference the active "
+                            "target versions."
+                        )
                 replay.active.targets_accepted = True
                 continue
 
@@ -355,52 +355,69 @@ class Advisor:
                     f"Tool {event.tool_name!r} was not an advised option."
                 )
 
+            self._validate_tool_event(event)
+
             self._reject_target_candidate(replay)
 
             if isinstance(event, ToolFailed):
                 self._record_failure(replay, event)
             elif isinstance(event, ToolSucceeded):
-                self._record_success(replay, event.tool_name)
+                self._record_success(replay, event)
 
         return replay
-
-    def _validate_report(
-        self,
-        report: ProjectEvent,
-        replay: _ReplayState,
-    ) -> None:
-        """Reject unsupported or hidden tool reports before logging them."""
-        if not isinstance(
-            report,
-            (
-                ArtifactAvailable,
-                ToolSucceeded,
-                ToolFailed,
-                TargetsAccepted,
-            ),
-        ):
-            raise TypeError("Advice reports must be project events.")
-
-        if isinstance(report, (ToolSucceeded, ToolFailed)):
-            visible_tools = self._visible_options(replay)
-            if report.tool_name not in visible_tools:
-                raise ValueError(
-                    f"Tool {report.tool_name!r} was not a visible root "
-                    "option."
-                )
 
     def _record_external_artifact(
         self,
         replay: _ReplayState,
-        artifact_name: str,
+        artifact: ArtifactVersion,
     ) -> None:
+        artifact_name = artifact.artifact_name
         if artifact_name not in self.project.workflow.artifact_names:
             raise ValueError(f"Unknown artifact: {artifact_name!r}")
 
-        replay.external_artifacts.add(artifact_name)
+        replay.external_artifacts[artifact_name] = artifact
         replay.active.available_artifacts.add(artifact_name)
+        replay.active.active_artifacts[artifact_name] = artifact
         for decision in replay.decisions:
             decision.checkpoint.available_artifacts.add(artifact_name)
+            decision.checkpoint.active_artifacts[artifact_name] = artifact
+
+    def _validate_tool_event(
+        self,
+        event: ToolSucceeded | ToolFailed,
+    ) -> None:
+        """Check that observed artifact roles match the workflow schema."""
+        tool = self.project.tool(event.tool_name)
+        expected_inputs = {
+            artifact.name
+            for artifact in tool.inputs
+        }
+        actual_inputs = {
+            artifact.artifact_name
+            for artifact in event.inputs
+        }
+        if expected_inputs != actual_inputs:
+            raise ValueError(
+                f"Observed tool {tool.name!r} used artifacts "
+                f"{sorted(actual_inputs)}, but the workflow declares "
+                f"{sorted(expected_inputs)}."
+            )
+
+        if isinstance(event, ToolSucceeded):
+            expected_outputs = {
+                artifact.name
+                for artifact in tool.outputs
+            }
+            actual_outputs = {
+                artifact.artifact_name
+                for artifact in event.outputs
+            }
+            if expected_outputs != actual_outputs:
+                raise ValueError(
+                    f"Observed tool {tool.name!r} created artifacts "
+                    f"{sorted(actual_outputs)}, but the workflow declares "
+                    f"{sorted(expected_outputs)}."
+                )
 
     def _record_failure(
         self,
@@ -430,14 +447,16 @@ class Advisor:
     def _record_success(
         self,
         replay: _ReplayState,
-        tool_name: str,
+        event: ToolSucceeded,
     ) -> None:
+        tool_name = event.tool_name
         decision = replay.decisions[-1]
         decision.selected_option = tool_name
 
         replay.active = self._after_tool(
             replay.active,
             self.project.tool(tool_name),
+            event.outputs,
         )
         replay.recovering = False
         replay.last_failed_tool = None
@@ -459,6 +478,9 @@ class Advisor:
                     exhausted_decision.checkpoint
                 )
                 replay.active.available_artifacts.update(
+                    replay.external_artifacts
+                )
+                replay.active.active_artifacts.update(
                     replay.external_artifacts
                 )
                 replay.backtrack_depth = max(0, depth - 1)
@@ -485,12 +507,19 @@ class Advisor:
 
         target_names = set(self.project.target_artifacts)
         replay.active.produced_artifacts.difference_update(target_names)
+        for target_name in target_names:
+            replay.active.target_candidates.pop(target_name, None)
         replay.active.targets_accepted = False
 
         if replay.decisions:
             replay.decisions[-1].checkpoint.produced_artifacts.difference_update(
                 target_names
             )
+            for target_name in target_names:
+                replay.decisions[-1].checkpoint.target_candidates.pop(
+                    target_name,
+                    None,
+                )
             replay.decisions[-1].checkpoint.targets_accepted = False
 
     def _initial_state(self) -> _AdviceState:
@@ -501,7 +530,9 @@ class Advisor:
         )
         return _AdviceState(
             available_artifacts=set(),
+            active_artifacts={},
             produced_artifacts=set(),
+            target_candidates={},
             next_tools=starting_tools,
         )
 
@@ -541,6 +572,7 @@ class Advisor:
         self,
         state: _AdviceState,
         tool: Tool,
+        output_versions: tuple[ArtifactVersion, ...] = (),
     ) -> _AdviceState:
         input_names = {artifact.name for artifact in tool.inputs}
         output_names = {artifact.name for artifact in tool.outputs}
@@ -549,16 +581,32 @@ class Advisor:
         available_artifacts.update(input_names)
         available_artifacts.update(output_names)
 
+        active_artifacts = dict(state.active_artifacts)
+        active_artifacts.update(
+            {
+                artifact.artifact_name: artifact
+                for artifact in output_versions
+            }
+        )
+
         produced_artifacts = set(state.produced_artifacts)
+        target_candidates = dict(state.target_candidates)
         if self._targets_ready(state):
             produced_artifacts.difference_update(
                 self.project.target_artifacts
             )
+            for target_name in self.project.target_artifacts:
+                target_candidates.pop(target_name, None)
         produced_artifacts.update(output_names)
+        for artifact in output_versions:
+            if artifact.artifact_name in self.project.target_artifacts:
+                target_candidates[artifact.artifact_name] = artifact
 
         return _AdviceState(
             available_artifacts=available_artifacts,
+            active_artifacts=active_artifacts,
             produced_artifacts=produced_artifacts,
+            target_candidates=target_candidates,
             next_tools=self.project.workflow.following_tools(tool.name),
         )
 
@@ -642,13 +690,16 @@ class Advisor:
     ) -> _AdviceState:
         state = self._copy_state(decision.checkpoint)
         state.available_artifacts.update(replay.external_artifacts)
+        state.active_artifacts.update(replay.external_artifacts)
         return state
 
     @staticmethod
     def _copy_state(state: _AdviceState) -> _AdviceState:
         return _AdviceState(
             available_artifacts=set(state.available_artifacts),
+            active_artifacts=dict(state.active_artifacts),
             produced_artifacts=set(state.produced_artifacts),
+            target_candidates=dict(state.target_candidates),
             next_tools=state.next_tools,
             targets_accepted=state.targets_accepted,
         )

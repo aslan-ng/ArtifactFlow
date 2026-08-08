@@ -1,11 +1,6 @@
 """See route-dependent needs before choosing a route."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 
 from workflow import workflow
 
@@ -31,8 +26,9 @@ for route in prepare.continuations:
 print("Template is visible early, but only on the Quick route.")
 
 for artifact_name in prepare.missing_artifacts:
-    command = advisor.advise(ArtifactAvailable(artifact_name))
-command = advisor.advise(ToolSucceeded("Prepare request"))
+    project.record_artifact_available(artifact_name)
+project.record_tool_success("Prepare request")
+command = advisor.advise()
 
 print("\nExecutable route choices:")
 for option in command.options:
@@ -50,7 +46,8 @@ print("Choose:", chosen_option.tool_name)
 
 for artifact_name in chosen_option.missing_artifacts:
     print("The user provides:", artifact_name)
-    command = advisor.advise(ArtifactAvailable(artifact_name))
+    project.record_artifact_available(artifact_name)
 
-command = advisor.advise(ToolSucceeded(chosen_option.tool_name))
+project.record_tool_success(chosen_option.tool_name)
+command = advisor.advise()
 print(command.status + ":", command.message)

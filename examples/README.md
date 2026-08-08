@@ -3,26 +3,68 @@
 These examples show how an application, an LLM, or a simulation can ask an
 ArtifactFlow `Advisor` what to do next.
 
-ArtifactFlow does not execute tools. The caller asks for advice, performs one
-external action, and reports the observed result in the next call:
+ArtifactFlow does not execute tools or depend on the LLM remembering to report
+its actions. An observer records facts on the `Project`; whenever advice is
+requested, the Advisor reconstructs the current state from that history:
 
 ```python
 command = advisor.advise()
-command = advisor.advise(ArtifactAvailable("Brief"))
-command = advisor.advise(ToolSucceeded("Write draft"))
-command = advisor.advise(ToolFailed("Review draft", "service timeout"))
-command = advisor.advise(TargetsAccepted())
+
+project.record_artifact_available("Brief")
+project.record_tool_success("Write draft")
+command = advisor.advise()
+
+project.record_tool_failure("Review draft", "service timeout")
+command = advisor.advise()
+
+if command.target_acceptance_required:
+    project.record_target_acceptance()
+    command = advisor.advise()
 ```
 
-The report is a fact that has already been observed, not an instruction or an
-intention. `advise(report)` validates and records that event before returning
-fresh advice. Calling `advise()` without a report is read-only, so repeated
-calls return the same advice while the project log is unchanged.
+The recording calls above simulate an observer. In a production integration, a
+raw LLM or MCP log adapter would make the same records from actual tool results,
+not from natural-language claims made by the LLM. `advise()` is read-only, so
+repeated calls return the same advice while the execution log is unchanged.
 
-These examples use the single-call reporting style intended for an eventual
-MCP wrapper. `Project` and `User` also provide direct recording methods for
-other applications, but the same event should never be recorded through both
-paths.
+The Advisor does not need to be called after every observation. If several
+valid steps happen before the next consultation, it replays all of them:
+
+```python
+# Assume these are consecutive tools on the selected workflow route.
+project.record_tool_success("Prepare data")
+project.record_tool_success("Run analysis")
+
+# This catches up with both successful calls.
+command = advisor.advise()
+```
+
+This prevents a missed consultation from permanently breaking the connection.
+The history must still contain each observed fact exactly once and in execution
+order. `Project` recording methods are convenient for examples and simulations;
+raw-log adapters should write the equivalent canonical observations. `User`
+records human or externally supplied artifacts and target acceptance.
+
+## Artifact versions
+
+The execution log is append-only. Recording the same artifact name again
+creates another version rather than overwriting the earlier value or file.
+For example:
+
+```python
+first = project.record_artifact_available("Temperature", value=288.15)
+second = project.record_artifact_available("Temperature", value=290.10)
+
+assert first.version == 1
+assert second.version == 2
+assert project.latest_artifact("Temperature") == second
+```
+
+Tool observations can also record their exact input versions and output values
+or files. The examples omit those payloads to stay focused on orchestration;
+the Project creates payload-free versions from the workflow definition. During
+recovery, the Advisor uses the newest versions valid on the restored route,
+which is not necessarily the newest version anywhere in the factual history.
 
 ## Suggested reading order
 
@@ -125,10 +167,10 @@ the same success-based lookahead preview; future failures are handled only if
 they actually occur.
 
 A linear target completes automatically. If a cycle can create another target
-candidate, `command.target_acceptance_required` is true. The caller may then
-report `TargetsAccepted()` or choose a root continuation to create a new
-candidate.
+candidate, `command.target_acceptance_required` is true. The observer may then
+record `project.record_target_acceptance()` before asking again, or the caller
+may choose a root continuation to create a new candidate.
 
 This lightweight API intentionally uses tool names instead of option IDs. It
-assumes tool names are unique, execution is sequential, and reports arrive
+assumes tool names are unique, execution is sequential, and observations arrive
 once and in order.

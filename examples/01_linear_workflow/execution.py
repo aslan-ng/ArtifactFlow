@@ -1,11 +1,6 @@
 """Ask for one instruction at a time in a linear workflow."""
 
-from artifactflow import (
-    Advisor,
-    ArtifactAvailable,
-    Project,
-    ToolSucceeded,
-)
+from artifactflow import Advisor, Project
 
 from workflow import workflow
 
@@ -13,15 +8,16 @@ from workflow import workflow
 project = Project(workflow)
 advisor = Advisor(project)
 
-# The first call has no report because nothing has happened yet.
+# The observer has not recorded any activity yet.
 command = advisor.advise()
 option = command.options[0]
 print("Next tool:", option.tool_name)
 print("Provide first:", option.missing_artifacts)
 
-# The external artifacts were obtained, so report those observed facts.
+# These lines simulate an observer recording externally obtained artifacts.
 for artifact_name in option.missing_artifacts:
-    command = advisor.advise(ArtifactAvailable(artifact_name))
+    project.record_artifact_available(artifact_name)
+command = advisor.advise()
 
 while command.status == "COMMAND":
     option = command.options[0]
@@ -32,8 +28,9 @@ while command.status == "COMMAND":
         option.outcome,
     )
 
-    # An external caller ran the tool and observed that it succeeded.
-    command = advisor.advise(ToolSucceeded(option.tool_name))
+    # An observer records the result; the Advisor reads it afterward.
+    project.record_tool_success(option.tool_name)
+    command = advisor.advise()
 
 print(command.status + ":", command.message)
 print("No target acceptance was needed for this linear workflow.")
