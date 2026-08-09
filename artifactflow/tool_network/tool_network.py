@@ -36,6 +36,49 @@ class ToolNetwork(
         self.include_tools: list[str] | None = None
         self.exclude_tools: list[str] | None = None
 
+    def contains_workflow(self, workflow: Workflow) -> bool:
+        """Return whether this network contains the complete workflow.
+
+        Matching tool names must declare the same input and output artifacts.
+        Tool order and the workflow's starting and target boundaries do not
+        affect structural containment.
+        """
+        if not isinstance(workflow, Workflow):
+            raise TypeError("workflow must be a Workflow.")
+
+        tools_by_name = {
+            tool.name: tool
+            for tool in self.tools
+        }
+        for workflow_tool in workflow.tools:
+            network_tool = tools_by_name.get(workflow_tool.name)
+            if network_tool is None:
+                return False
+
+            workflow_inputs = {
+                artifact.name
+                for artifact in workflow_tool.inputs
+            }
+            network_inputs = {
+                artifact.name
+                for artifact in network_tool.inputs
+            }
+            workflow_outputs = {
+                artifact.name
+                for artifact in workflow_tool.outputs
+            }
+            network_outputs = {
+                artifact.name
+                for artifact in network_tool.outputs
+            }
+            if (
+                workflow_inputs != network_inputs
+                or workflow_outputs != network_outputs
+            ):
+                return False
+
+        return True
+
     def __add__(
         self,
         other: ToolNetwork | Workflow,

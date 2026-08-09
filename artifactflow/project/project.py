@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 
+from artifactflow.plan.plan import Plan
 from artifactflow.project.log import (
     ArtifactAvailable,
     ArtifactOutput,
@@ -17,7 +19,15 @@ from artifactflow.project.log import (
     ToolSucceeded,
 )
 from artifactflow.tool.tool import Tool
+from artifactflow.tool_network.tool_network import ToolNetwork
 from artifactflow.workflow.workflow import Workflow
+
+
+ActionLocation = Literal[
+    "PROPOSED_PLAN",
+    "WORKFLOW",
+    "TOOL_NETWORK",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,12 +48,12 @@ class ProjectState:
 
 
 class Project:
-    """Combine one workflow definition with its canonical execution log.
+    """Combine a workflow, its wider tool network, and an execution log.
 
     A project starts with an empty :class:`ExecutionLog` unless an existing
-    log is injected. An observer or raw-log adapter records facts in that
-    log. The Advisor reads those facts whenever advice is requested; it does
-    not depend on the LLM remembering to report each action to the Advisor.
+    log is injected. When no tool network is supplied, an exact network copy
+    of the workflow is created. An observer or raw-log adapter records facts
+    in the log; the Advisor reads those facts whenever advice is requested.
     """
 
     def __init__(
@@ -52,8 +62,24 @@ class Project:
         starting_artifacts: Iterable[str] | None = None,
         target_artifacts: Iterable[str] | None = None,
         execution_log: ExecutionLog | None = None,
+        tool_network: ToolNetwork | None = None,
     ) -> None:
         self.workflow = workflow
+        if tool_network is not None and not isinstance(
+            tool_network,
+            ToolNetwork,
+        ):
+            raise TypeError("tool_network must be a ToolNetwork or None.")
+        self.tool_network = (
+            tool_network
+            if tool_network is not None
+            else workflow.to_tool_network()
+        )
+        if not self.tool_network.contains_workflow(workflow):
+            raise ValueError(
+                "tool_network must contain the complete workflow."
+            )
+
         self.starting_artifacts = self._resolve_artifacts(
             "starting_artifacts",
             starting_artifacts,
@@ -74,7 +100,7 @@ class Project:
         # ``execution_log`` when the distinction from a raw LLM log matters.
         self.log = self.execution_log
 
-        self._validate_artifacts(
+        self._validate_workflow_artifacts(
             set(self.starting_artifacts) | set(self.target_artifacts)
         )
         if not self.target_artifacts:
@@ -203,11 +229,36 @@ class Project:
         return self.execution_log.targets_accepted(targets)
 
     def tool(self, tool_name: str) -> Tool:
-        """Return a workflow tool by name."""
-        for tool in self.workflow.tools:
+        """Return a known tool from the project's complete tool network."""
+        for tool in self.tool_network.tools:
             if tool.name == tool_name:
                 return tool
         raise ValueError(f"Unknown tool: {tool_name!r}")
+
+    def classify_action(
+        self,
+        tool_name: str,
+        proposed_plans: Iterable[Plan] = (),
+    ) -> ActionLocation:
+        """Locate an observed tool within the project's planning scopes.
+
+        Classification is purely structural. The Advisor will later decide
+        how to respond to an action outside its proposed plans.
+        """
+        plans = tuple(proposed_plans)
+        if not all(isinstance(plan, Plan) for plan in plans):
+            raise TypeError("proposed_plans must contain Plan objects.")
+
+        if any(plan.contains_tool(tool_name) for plan in plans):
+            return "PROPOSED_PLAN"
+        if self.workflow.contains_tool(tool_name):
+            return "WORKFLOW"
+        if self.tool_network.contains_tool(tool_name):
+            return "TOOL_NETWORK"
+        raise ValueError(
+            f"Unknown tool: {tool_name!r}. It is not part of the project's "
+            "tool network."
+        )
 
     def ordered_artifacts(
         self,
@@ -295,6 +346,14 @@ class Project:
         return tuple(by_name[name] for name in expected_names)
 
     def _validate_artifacts(self, artifact_names: set[str]) -> None:
+        unknown = artifact_names - set(self.tool_network.artifact_names)
+        if unknown:
+            raise ValueError(f"Unknown artifacts: {sorted(unknown)}")
+
+    def _validate_workflow_artifacts(
+        self,
+        artifact_names: set[str],
+    ) -> None:
         unknown = artifact_names - set(self.workflow.artifact_names)
         if unknown:
             raise ValueError(f"Unknown artifacts: {sorted(unknown)}")

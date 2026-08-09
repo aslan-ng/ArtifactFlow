@@ -3,14 +3,34 @@ from __future__ import annotations
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
+from itertools import combinations
 from typing import TYPE_CHECKING
+
+import networkx as nx
 
 from artifactflow.network.network import Network
 from artifactflow.tool.compatibility.tools_compatibility import tool_readiness
 from artifactflow.similarity.qap import QAPStudy
 
 if TYPE_CHECKING:
+    from artifactflow.plan.plan import Plan
     from artifactflow.tool_network.tool_network import ToolNetwork
+
+
+def _has_positive_length_path(
+    graph: nx.DiGraph,
+    start: str,
+    target: str,
+) -> bool:
+    """Return whether a directed path traverses at least one edge."""
+    if start not in graph or target not in graph:
+        return False
+    if start != target:
+        return nx.has_path(graph, start, target)
+    return any(
+        nx.has_path(graph, successor, target)
+        for successor in graph.successors(start)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +77,173 @@ class Workflow(
 
         self.starting_artifacts: list[str] | None = None
         self.target_artifacts: list[str] | None = None
+
+    def to_tool_network(self) -> ToolNetwork:
+        """Return an independent tool network with the same definition."""
+        from artifactflow.tool_network.tool_network import ToolNetwork
+
+        tool_network = ToolNetwork()
+        for tool in self.tools:
+            tool_network.add_tool(tool)
+        tool_network.starting_artifacts = deepcopy(self.starting_artifacts)
+        tool_network.target_artifacts = deepcopy(self.target_artifacts)
+        return tool_network
+
+    def discover_plans(
+        self,
+        starting_artifacts: Iterable[str] | None = None,
+        target_artifacts: Iterable[str] | None = None,
+    ) -> list[Plan]:
+        """Return every minimal target-reaching plan in this workflow.
+
+        Alternative producers create separate plans. Tools in a directed
+        cycle are treated as one indivisible unit, so a repeatable cycle does
+        not create infinitely many plans for different iteration counts. The
+        search is exhaustive and therefore best suited to bounded workflows.
+        """
+        from artifactflow.plan.plan import Plan
+
+        starts = self._plan_boundary(
+            "starting_artifacts",
+            starting_artifacts,
+            self.starting_artifacts,
+        )
+        targets = self._plan_boundary(
+            "target_artifacts",
+            target_artifacts,
+            self.target_artifacts,
+        )
+        if not targets:
+            raise ValueError("target_artifacts cannot be empty.")
+
+        unknown_artifacts = (
+            set(starts) | set(targets)
+        ) - set(self.artifact_names)
+        if unknown_artifacts:
+            raise ValueError(
+                f"Unknown artifacts: {sorted(unknown_artifacts)}"
+            )
+
+        tool_graph = self.to_tool_dependency_graph()
+        tool_positions = {
+            tool.name: position
+            for position, tool in enumerate(self.tools)
+        }
+        tool_units = [
+            frozenset(component)
+            for component in nx.strongly_connected_components(tool_graph)
+        ]
+        tool_units.sort(
+            key=lambda unit: min(tool_positions[name] for name in unit)
+        )
+
+        valid_tool_sets: list[frozenset[str]] = []
+        for unit_count in range(1, len(tool_units) + 1):
+            for selected_units in combinations(tool_units, unit_count):
+                selected_tools = frozenset().union(*selected_units)
+                if self._is_valid_plan(
+                    selected_tools,
+                    starts,
+                    targets,
+                ):
+                    valid_tool_sets.append(selected_tools)
+
+        minimal_tool_sets = [
+            selected_tools
+            for selected_tools in valid_tool_sets
+            if not any(
+                other_tools < selected_tools
+                for other_tools in valid_tool_sets
+            )
+        ]
+        minimal_tool_sets.sort(
+            key=lambda names: tuple(
+                position
+                for position, tool in enumerate(self.tools)
+                if tool.name in names
+            )
+        )
+
+        plans: list[Plan] = []
+        for selected_tools in minimal_tool_sets:
+            plan = Plan()
+            for tool in self.tools:
+                if tool.name in selected_tools:
+                    plan.add_tool(tool)
+            plan.starting_artifacts = list(starts)
+            plan.target_artifacts = list(targets)
+            plans.append(plan)
+        return plans
+
+    def _is_valid_plan(
+        self,
+        selected_tools: frozenset[str],
+        starting_artifacts: tuple[str, ...],
+        target_artifacts: tuple[str, ...],
+    ) -> bool:
+        """Return whether a tool subset is one complete plan."""
+        selected = [
+            tool
+            for tool in self.tools
+            if tool.name in selected_tools
+        ]
+        produced_artifacts = {
+            artifact.name
+            for tool in selected
+            for artifact in tool.outputs
+        }
+        if not set(target_artifacts) <= produced_artifacts:
+            return False
+
+        starting_names = set(starting_artifacts)
+        for tool in selected:
+            for artifact in tool.inputs:
+                if artifact.name in starting_names:
+                    continue
+                producers = {
+                    producer_name
+                    for producer_name in self.G.predecessors(artifact.name)
+                    if self.G.nodes[producer_name].get("type") == "tool"
+                }
+                if producers and not producers & selected_tools:
+                    return False
+
+        relevant_nodes = set(selected_tools)
+        relevant_nodes.update(
+            artifact.name
+            for tool in selected
+            for artifact in (*tool.inputs, *tool.outputs)
+        )
+        plan_graph = self.G.subgraph(relevant_nodes)
+
+        if any(
+            not _has_positive_length_path(plan_graph, start, target)
+            for start in starting_artifacts
+            for target in target_artifacts
+        ):
+            return False
+
+        return all(
+            any(
+                nx.has_path(plan_graph, tool.name, target)
+                for target in target_artifacts
+            )
+            for tool in selected
+        )
+
+    @staticmethod
+    def _plan_boundary(
+        name: str,
+        provided: Iterable[str] | None,
+        stored: list[str] | None,
+    ) -> tuple[str, ...]:
+        value = provided if provided is not None else stored
+        if value is None:
+            raise ValueError(
+                f"{name} must be provided because the workflow does not "
+                "define it."
+            )
+        return tuple(dict.fromkeys(value))
 
     def following_tools(
         self,

@@ -51,6 +51,12 @@ class Network(
             if data.get("type") == "artifact"
         ]
 
+    def contains_tool(self, tool_name: str) -> bool:
+        """Return whether this network contains a named tool."""
+        if not isinstance(tool_name, str):
+            raise TypeError("tool_name must be a string.")
+        return tool_name in self.tool_names
+
     def to_tool_dependency_graph(self) -> nx.DiGraph:
         """
         Return a tool-only projection of the artifact dependency graph.
@@ -168,7 +174,9 @@ class Network(
 
     def add_tool(self, tool: Tool):
         if tool.name in self.tool_names:
-            raise ValueError(f"Tool with name {tool.name} already exists in the workflow.")
+            raise ValueError(
+                f"Tool with name {tool.name} already exists in the network."
+            )
         self.tools.append(tool)
         self.G.add_node(tool.name, type='tool')
 

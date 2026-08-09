@@ -2,7 +2,9 @@ from .tool import Tool
 from .artifact import Artifact
 from .tool_network import ToolNetwork
 from .workflow import Workflow
+from .plan import Plan, PlanRequirements
 from .project import (
+    ActionLocation,
     ArtifactAvailable,
     ArtifactOutput,
     ArtifactVersion,
@@ -18,6 +20,7 @@ from .advisor import Advisor, AdvisorCommand, RecoveryContext, ToolOption
 from .user import User
 
 __all__ = [
+    "ActionLocation",
     "Advisor",
     "AdvisorCommand",
     "Artifact",
@@ -26,6 +29,8 @@ __all__ = [
     "ArtifactVersion",
     "ExecutionLog",
     "FileReference",
+    "Plan",
+    "PlanRequirements",
     "Project",
     "ProjectEvent",
     "RecoveryContext",

@@ -10,9 +10,10 @@ from .log import (
     ToolFailed,
     ToolSucceeded,
 )
-from .project import Project, ProjectState
+from .project import ActionLocation, Project, ProjectState
 
 __all__ = [
+    "ActionLocation",
     "ArtifactAvailable",
     "ArtifactOutput",
     "ArtifactVersion",
