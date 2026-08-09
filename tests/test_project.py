@@ -293,13 +293,20 @@ class TestAdvisor(unittest.TestCase):
 
         self.assertEqual(advisor.advise().status, "COMMAND")
 
-    def test_rejects_a_tool_that_was_not_an_option(self):
+    def test_reports_an_unadvised_workflow_tool_as_a_deviation(self):
         project = Project(self.workflow)
         advisor = Advisor(project)
-        project.record_tool_success("second")
+        event = project.record_tool_success("second")
 
-        with self.assertRaisesRegex(ValueError, "not an advised option"):
-            advisor.advise()
+        command = advisor.advise()
+
+        self.assertEqual(command.status, "COMMAND")
+        self.assertIsNotNone(command.deviation)
+        assert command.deviation is not None
+        self.assertEqual(command.deviation.observed_tool, "second")
+        self.assertEqual(command.deviation.location, "WORKFLOW")
+        self.assertIs(project.events[-1], event)
+        self.assertIn("D", project.available_artifacts)
 
 
 class TestAlternativeRoutes(unittest.TestCase):
@@ -338,13 +345,13 @@ class TestAlternativeRoutes(unittest.TestCase):
 
         self.assertEqual(
             [option.tool_name for option in command.options],
-            ["left", "right"],
+            ["right", "left"],
         )
+        self.assertEqual(command.options[0].missing_artifacts, ())
         self.assertEqual(
-            command.options[0].missing_artifacts,
+            command.options[1].missing_artifacts,
             ("left seed",),
         )
-        self.assertEqual(command.options[1].missing_artifacts, ())
 
 
 class TestBootstrapLookaheadAfterRouteChoice(unittest.TestCase):
@@ -583,22 +590,16 @@ class TestRecovery(unittest.TestCase):
         project.record_tool_failure("primary", "first failure")
         command = advisor.advise()
 
-        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.status, "COMMAND")
         self.assertEqual(command.options[0].tool_name, "primary")
         self.assertEqual(command.options[0].action, "RETRY")
-        self.assertEqual(command.recovery.last_failed_tool, "primary")
-        self.assertEqual(command.recovery.last_failure_reason, "first failure")
 
         project.record_tool_failure("primary", "retry failure")
         command = advisor.advise()
 
-        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.status, "COMMAND")
         self.assertEqual(command.options[0].tool_name, "backup")
         self.assertEqual(command.options[0].action, "ALTERNATIVE")
-        self.assertEqual(
-            command.recovery.exhausted_options,
-            ("primary",),
-        )
 
         project.record_tool_failure("backup", "first failure")
         self.assertEqual(advisor.advise().options[0].action, "RETRY")
@@ -618,7 +619,6 @@ class TestRecovery(unittest.TestCase):
 
         self.assertEqual(command.status, "BLOCKED")
         self.assertEqual(command.options, ())
-        self.assertEqual(command.recovery.last_failed_tool, "backup")
 
     def test_failed_continuation_rejects_the_old_target_candidate(self):
         start = Artifact("start")
@@ -639,7 +639,7 @@ class TestRecovery(unittest.TestCase):
         project.record_tool_failure("write", "simulated failure")
         command = advisor.advise()
 
-        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.status, "COMMAND")
         self.assertEqual(command.target_artifacts, ())
 
         User(project).accept_targets()
@@ -669,7 +669,7 @@ class TestRecovery(unittest.TestCase):
         project.record_tool_failure("write", "second cycle failure")
         command = advisor.advise()
 
-        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.status, "COMMAND")
         self.assertEqual(command.options[0].action, "RETRY")
 
 
@@ -706,7 +706,7 @@ class TestRecoveryBacktracking(unittest.TestCase):
 
         command = advisor.advise()
 
-        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.status, "COMMAND")
         self.assertEqual(
             [option.tool_name for option in command.options],
             ["C", "D"],
@@ -715,8 +715,6 @@ class TestRecoveryBacktracking(unittest.TestCase):
             [option.action for option in command.options],
             ["ALTERNATIVE", "ALTERNATIVE"],
         )
-        self.assertEqual(command.recovery.backtrack_depth, 1)
-        self.assertEqual(command.recovery.exhausted_options, ("B",))
         self.assertEqual(command.options[0].missing_artifacts, ())
 
         # The complete history retains B's output, but recovery restores the
@@ -822,9 +820,14 @@ class TestObservedAdvice(unittest.TestCase):
         )
         event = project.record_tool_success("future")
 
-        with self.assertRaisesRegex(ValueError, "not an advised option"):
-            advisor.advise()
+        command = advisor.advise()
 
+        self.assertEqual(command.status, "COMPLETE")
+        self.assertIsNotNone(command.deviation)
+        assert command.deviation is not None
+        self.assertEqual(command.deviation.observed_tool, "future")
+        self.assertEqual(command.deviation.location, "PROPOSED_PLAN")
+        self.assertEqual(command.deviation.proposed_options, ("first",))
         self.assertIs(project.events[-1], event)
 
     def test_catches_up_after_several_tools_run_between_advice_calls(self):
@@ -959,7 +962,7 @@ class TestLookahead(unittest.TestCase):
         command = advisor.advise()
         self.assertEqual(command.status, "COMPLETE")
 
-    def test_preview_marks_a_route_that_cannot_reach_the_target(self):
+    def test_preview_excludes_a_route_that_cannot_reach_the_target(self):
         start = Artifact("start")
         fork = Artifact("fork")
         dead_output = Artifact("dead output")
@@ -977,8 +980,14 @@ class TestLookahead(unittest.TestCase):
             lookahead_depth=2,
         ).advise()
 
-        dead_route, finish = command.options[0].continuations
-        self.assertEqual(dead_route.outcome, "DEAD_END")
+        self.assertEqual(
+            [
+                option.tool_name
+                for option in command.options[0].continuations
+            ],
+            ["finish"],
+        )
+        finish = command.options[0].continuations[0]
         self.assertEqual(finish.outcome, "COMPLETE")
 
 
@@ -1066,6 +1075,22 @@ class TestAdviceBreadth(unittest.TestCase):
             with self.assertRaises(TypeError):
                 Advisor(Project(self.workflow), max_options=value)
 
+        for value in (0, 2):
+            advisor = Advisor(
+                Project(self.workflow),
+                max_retries=value,
+            )
+            self.assertEqual(advisor.max_retries, value)
+
+        with self.assertRaises(ValueError):
+            Advisor(Project(self.workflow), max_retries=-1)
+        for value in (True, 1.5, "2", None):
+            with self.assertRaises(TypeError):
+                Advisor(
+                    Project(self.workflow),
+                    max_retries=value,  # type: ignore[arg-type]
+                )
+
 
 class TestRecoveryBreadth(unittest.TestCase):
     def setUp(self):
@@ -1089,7 +1114,7 @@ class TestRecoveryBreadth(unittest.TestCase):
         project.record_tool_failure("primary", "failure")
         command = advisor.advise()
 
-        self.assertEqual(command.status, "RECOVERY")
+        self.assertEqual(command.status, "COMMAND")
         self.assertEqual(
             [(option.tool_name, option.action) for option in command.options],
             [
@@ -1120,6 +1145,7 @@ class TestRecoveryBreadth(unittest.TestCase):
                 ("third", "ALTERNATIVE"),
             ],
         )
+
 
     def test_max_one_recreates_retry_first_recovery(self):
         project = Project(self.workflow)
@@ -1168,6 +1194,127 @@ class TestRecoveryBreadth(unittest.TestCase):
             "earlier alternative",
             [option.tool_name for option in command.options],
         )
+
+
+class TestRetryBudget(unittest.TestCase):
+    def setUp(self):
+        start = Artifact("start")
+        fork = Artifact("fork")
+        target = Artifact("target")
+        self.workflow = make_workflow(
+            Tool("prepare", inputs=[start], outputs=[fork]),
+            Tool("primary", inputs=[fork], outputs=[target]),
+            Tool("backup", inputs=[fork], outputs=[target]),
+            starting=["start"],
+            target=["target"],
+        )
+
+    def test_zero_retries_exhausts_an_option_after_its_first_failure(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project, max_retries=0)
+        project.record_tool_success("prepare")
+
+        project.record_tool_failure("primary")
+        command = advisor.advise()
+
+        self.assertNotIn(
+            "primary",
+            [option.tool_name for option in command.options],
+        )
+        self.assertEqual(command.options[0].tool_name, "backup")
+        self.assertEqual(command.options[0].action, "ALTERNATIVE")
+
+    def test_two_retries_are_offered_before_the_option_is_exhausted(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project, max_retries=2)
+        project.record_tool_success("prepare")
+
+        project.record_tool_failure("primary")
+        first_retry = advisor.advise()
+        self.assertEqual(first_retry.options[0].tool_name, "primary")
+        self.assertEqual(first_retry.options[0].action, "RETRY")
+
+        project.record_tool_failure("primary")
+        second_retry = advisor.advise()
+        self.assertEqual(second_retry.options[0].tool_name, "primary")
+        self.assertEqual(second_retry.options[0].action, "RETRY")
+
+        project.record_tool_failure("primary")
+        exhausted = advisor.advise()
+        self.assertNotIn(
+            "primary",
+            [option.tool_name for option in exhausted.options],
+        )
+        self.assertEqual(exhausted.options[0].tool_name, "backup")
+        self.assertEqual(exhausted.options[0].action, "ALTERNATIVE")
+
+    def test_default_budget_remains_one_retry(self):
+        project = Project(self.workflow)
+        advisor = Advisor(project)
+        project.record_tool_success("prepare")
+
+        project.record_tool_failure("primary")
+        retry = advisor.advise()
+        self.assertEqual(retry.options[0].tool_name, "primary")
+        self.assertEqual(retry.options[0].action, "RETRY")
+
+        project.record_tool_failure("primary")
+        exhausted = advisor.advise()
+        self.assertNotIn(
+            "primary",
+            [option.tool_name for option in exhausted.options],
+        )
+        self.assertEqual(exhausted.options[0].tool_name, "backup")
+
+    def test_retry_budget_is_fixed_and_part_of_advice_configuration(self):
+        project = Project(self.workflow)
+        first = Advisor(project, max_retries=0)
+        first.advise()
+
+        second = Advisor(
+            project,
+            max_retries=2,
+            advice_history=first.advice_history,
+        )
+        second.advise()
+
+        self.assertEqual(len(first.advice_history), 2)
+        self.assertNotEqual(
+            first.advice_history.snapshots[0].configuration,
+            first.advice_history.snapshots[1].configuration,
+        )
+        with self.assertRaises(AttributeError):
+            first.max_retries = 1  # type: ignore[misc]
+
+    def test_a_new_cycle_visit_gets_a_fresh_configured_retry_budget(self):
+        start = Artifact("start")
+        draft = Artifact("draft")
+        target = Artifact("target")
+        workflow = make_workflow(
+            Tool("write", inputs=[start], outputs=[draft]),
+            Tool("evaluate", inputs=[draft], outputs=[start, target]),
+            starting=["start"],
+            target=["target"],
+        )
+        project = Project(workflow)
+        advisor = Advisor(project, max_retries=2)
+        project.record_tool_success("write")
+        project.record_tool_success("evaluate")
+
+        project.record_tool_failure("write")
+        self.assertEqual(advisor.advise().options[0].action, "RETRY")
+        project.record_tool_failure("write")
+        self.assertEqual(advisor.advise().options[0].action, "RETRY")
+        project.record_tool_success("write")
+        project.record_tool_success("evaluate")
+
+        project.record_tool_failure("write")
+        self.assertEqual(advisor.advise().options[0].action, "RETRY")
+        project.record_tool_failure("write")
+        self.assertEqual(advisor.advise().options[0].action, "RETRY")
+        project.record_tool_failure("write")
+
+        self.assertEqual(advisor.advise().status, "BLOCKED")
 
 
 if __name__ == "__main__":

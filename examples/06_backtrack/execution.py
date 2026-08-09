@@ -54,21 +54,25 @@ for failed_tool in failed_attempts:
     )
     project.record_tool_failure(failed_tool, "simulated failure")
     command = advisor.advise()
-    if command.status == "RECOVERY":
-        print(
-            " Advisor now offers:",
-            tuple(
-                (option.action, option.tool_name)
-                for option in command.options
-            ),
-        )
+    print(
+        " Advisor now offers:",
+        tuple(
+            (option.action, option.tool_name)
+            for option in command.options
+        ),
+    )
 
 print("\nThe detailed branch is exhausted.")
-assert command.recovery is not None
-print("Backtrack depth:", command.recovery.backtrack_depth)
 print(
     "Restored alternatives:",
-    tuple(option.tool_name for option in command.options),
+    tuple(
+        (
+            option.action,
+            option.tool_name,
+            option.input_artifacts,
+        )
+        for option in command.options
+    ),
 )
 print(
     "Detailed route remains in the factual history:",

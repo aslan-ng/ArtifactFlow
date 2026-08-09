@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Hashable, Iterable
 from itertools import combinations
 import networkx as nx
 from copy import deepcopy
 
+from artifactflow.plan.plan import Plan
 from artifactflow.similarity.qap import QAPStudy
 from artifactflow.network.network import Network
 from artifactflow.workflow.workflow import Workflow
@@ -11,10 +13,12 @@ from artifactflow.workflow.workflow import Workflow
 
 def _has_positive_length_path(
     graph: nx.DiGraph,
-    start: str,
-    target: str,
+    start: Hashable,
+    target: Hashable,
 ) -> bool:
     """Return whether a directed path traverses at least one edge."""
+    if start not in graph or target not in graph:
+        return False
     if start != target:
         return nx.has_path(graph, start, target)
 
@@ -338,6 +342,196 @@ class ToolNetwork(
                 workflows.append(workflow)
 
         return workflows
+
+    def discover_continuation_plans(
+        self,
+        available_artifacts: Iterable[str],
+        anchor_artifacts: Iterable[str],
+        target_artifacts: Iterable[str],
+    ) -> list[Plan]:
+        """Return minimal plans from an observed state to fresh targets.
+
+        ``available_artifacts`` are usable now. ``anchor_artifacts`` identify
+        the recent results from which the continuation should proceed. Every
+        returned plan reaches each target from at least one anchor; unrelated
+        available artifacts do not need to lead to every target.
+
+        A plan may require an artifact that has no producer in this network;
+        that artifact remains an external input reported by the plan. When an
+        unavailable input does have network producers, at least one producer
+        must be included. Strongly connected tool components are selected as
+        indivisible units, so cycles remain structural rather than unrolled.
+
+        The search is exhaustive and is intended for bounded tool networks.
+        """
+        available = self._continuation_boundary(
+            "available_artifacts",
+            available_artifacts,
+            allow_empty=True,
+        )
+        anchors = self._continuation_boundary(
+            "anchor_artifacts",
+            anchor_artifacts,
+        )
+        targets = self._continuation_boundary(
+            "target_artifacts",
+            target_artifacts,
+        )
+
+        known_artifacts = set(self.artifact_names)
+        unknown = (
+            set(available) | set(anchors) | set(targets)
+        ) - known_artifacts
+        if unknown:
+            raise ValueError(f"Unknown artifacts: {sorted(unknown)}")
+
+        unavailable_anchors = set(anchors) - set(available)
+        if unavailable_anchors:
+            raise ValueError(
+                "anchor_artifacts must already be available: "
+                f"{sorted(unavailable_anchors)}"
+            )
+
+        tool_graph = self.to_tool_dependency_graph()
+        tool_positions = {
+            tool.name: position
+            for position, tool in enumerate(self.tools)
+        }
+        tool_units = [
+            frozenset(component)
+            for component in nx.strongly_connected_components(tool_graph)
+        ]
+        tool_units.sort(
+            key=lambda unit: min(tool_positions[name] for name in unit)
+        )
+
+        valid_tool_sets: list[frozenset[str]] = []
+        for unit_count in range(1, len(tool_units) + 1):
+            for selected_units in combinations(tool_units, unit_count):
+                selected_tools = frozenset().union(*selected_units)
+                if self._is_valid_continuation_plan(
+                    selected_tools,
+                    frozenset(available),
+                    anchors,
+                    targets,
+                ):
+                    valid_tool_sets.append(selected_tools)
+
+        minimal_tool_sets = [
+            selected_tools
+            for selected_tools in valid_tool_sets
+            if not any(
+                other_tools < selected_tools
+                for other_tools in valid_tool_sets
+            )
+        ]
+        minimal_tool_sets.sort(
+            key=lambda names: tuple(
+                position
+                for position, tool in enumerate(self.tools)
+                if tool.name in names
+            )
+        )
+
+        plans: list[Plan] = []
+        for selected_tools in minimal_tool_sets:
+            plan = Plan()
+            for tool in self.tools:
+                if tool.name in selected_tools:
+                    plan.add_tool(tool)
+            plan.starting_artifacts = [
+                artifact_name
+                for artifact_name in anchors
+                if artifact_name in plan.artifact_names
+            ]
+            plan.target_artifacts = list(targets)
+            plans.append(plan)
+        return plans
+
+    def _is_valid_continuation_plan(
+        self,
+        selected_tools: frozenset[str],
+        available_artifacts: frozenset[str],
+        anchor_artifacts: tuple[str, ...],
+        target_artifacts: tuple[str, ...],
+    ) -> bool:
+        """Return whether a tool subset is one complete continuation."""
+        selected = [
+            tool
+            for tool in self.tools
+            if tool.name in selected_tools
+        ]
+        produced_artifacts = {
+            artifact.name
+            for tool in selected
+            for artifact in tool.outputs
+        }
+        if not set(target_artifacts) <= produced_artifacts:
+            return False
+
+        for tool in selected:
+            for artifact in tool.inputs:
+                if artifact.name in available_artifacts:
+                    continue
+                producers = {
+                    candidate.name
+                    for candidate in self.tools
+                    if any(
+                        output.name == artifact.name
+                        for output in candidate.outputs
+                    )
+                }
+                if producers and not producers & selected_tools:
+                    return False
+
+        plan_graph = self._typed_dependency_graph(selected_tools)
+
+        if any(
+            not any(
+                _has_positive_length_path(
+                    plan_graph,
+                    ("artifact", anchor),
+                    ("artifact", target),
+                )
+                for anchor in anchor_artifacts
+            )
+            for target in target_artifacts
+        ):
+            return False
+
+        return all(
+            any(
+                nx.has_path(
+                    plan_graph,
+                    ("tool", tool.name),
+                    ("artifact", target),
+                )
+                for target in target_artifacts
+            )
+            for tool in selected
+        )
+
+    @staticmethod
+    def _continuation_boundary(
+        name: str,
+        artifacts: Iterable[str],
+        *,
+        allow_empty: bool = False,
+    ) -> tuple[str, ...]:
+        if isinstance(artifacts, str):
+            values = (artifacts,)
+        else:
+            try:
+                values = tuple(artifacts)
+            except TypeError:
+                raise TypeError(f"{name} must contain artifact names.") from None
+
+        if not all(isinstance(value, str) for value in values):
+            raise TypeError(f"{name} must contain artifact names.")
+        values = tuple(dict.fromkeys(values))
+        if not values and not allow_empty:
+            raise ValueError(f"{name} cannot be empty.")
+        return values
 
     def similar_workflows(
         self,

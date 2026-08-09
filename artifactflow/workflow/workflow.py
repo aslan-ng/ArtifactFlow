@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import combinations
@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 def _has_positive_length_path(
     graph: nx.DiGraph,
-    start: str,
-    target: str,
+    start: Hashable,
+    target: Hashable,
 ) -> bool:
     """Return whether a directed path traverses at least one edge."""
     if start not in graph or target not in graph:
@@ -201,23 +201,24 @@ class Workflow(
                 if artifact.name in starting_names:
                     continue
                 producers = {
-                    producer_name
-                    for producer_name in self.G.predecessors(artifact.name)
-                    if self.G.nodes[producer_name].get("type") == "tool"
+                    candidate.name
+                    for candidate in self.tools
+                    if any(
+                        output.name == artifact.name
+                        for output in candidate.outputs
+                    )
                 }
                 if producers and not producers & selected_tools:
                     return False
 
-        relevant_nodes = set(selected_tools)
-        relevant_nodes.update(
-            artifact.name
-            for tool in selected
-            for artifact in (*tool.inputs, *tool.outputs)
-        )
-        plan_graph = self.G.subgraph(relevant_nodes)
+        plan_graph = self._typed_dependency_graph(selected_tools)
 
         if any(
-            not _has_positive_length_path(plan_graph, start, target)
+            not _has_positive_length_path(
+                plan_graph,
+                ("artifact", start),
+                ("artifact", target),
+            )
             for start in starting_artifacts
             for target in target_artifacts
         ):
@@ -225,7 +226,11 @@ class Workflow(
 
         return all(
             any(
-                nx.has_path(plan_graph, tool.name, target)
+                nx.has_path(
+                    plan_graph,
+                    ("tool", tool.name),
+                    ("artifact", target),
+                )
                 for target in target_artifacts
             )
             for tool in selected

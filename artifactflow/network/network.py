@@ -45,11 +45,12 @@ class Network(
 
     @property
     def artifact_names(self) -> list[str]:
-        return [
-            node
-            for node, data in self.G.nodes(data=True)
-            if data.get("type") == "artifact"
-        ]
+        """Return artifact names independently of display-graph node keys."""
+        return list(dict.fromkeys(
+            artifact.name
+            for tool in self.tools
+            for artifact in (*tool.inputs, *tool.outputs)
+        ))
 
     def contains_tool(self, tool_name: str) -> bool:
         """Return whether this network contains a named tool."""
@@ -68,22 +69,28 @@ class Network(
         tool_graph = nx.DiGraph()
         tool_graph.add_nodes_from(
             (
-                tool_name,
-                self.G.nodes[tool_name].copy(),
+                tool.name,
+                {"type": "tool"},
             )
-            for tool_name in self.tool_names
+            for tool in self.tools
         )
 
         for artifact_name in self.artifact_names:
             producer_names = [
-                node_name
-                for node_name in self.G.predecessors(artifact_name)
-                if self.G.nodes[node_name].get("type") == "tool"
+                tool.name
+                for tool in self.tools
+                if any(
+                    artifact.name == artifact_name
+                    for artifact in tool.outputs
+                )
             ]
             consumer_names = [
-                node_name
-                for node_name in self.G.successors(artifact_name)
-                if self.G.nodes[node_name].get("type") == "tool"
+                tool.name
+                for tool in self.tools
+                if any(
+                    artifact.name == artifact_name
+                    for artifact in tool.inputs
+                )
             ]
 
             for producer_name in producer_names:
@@ -100,6 +107,48 @@ class Network(
                         )
 
         return tool_graph
+
+    def _typed_dependency_graph(
+        self,
+        tool_names: frozenset[str] | set[str] | None = None,
+    ) -> nx.DiGraph:
+        """Return a bipartite graph whose typed keys cannot collide.
+
+        ``G`` remains the package's concise public/display graph and uses
+        plain names as node keys. Structural analysis uses this private graph
+        so a tool and artifact may safely have the same public name.
+        """
+        selected_names = (
+            set(self.tool_names)
+            if tool_names is None
+            else set(tool_names)
+        )
+        graph = nx.DiGraph()
+
+        for tool in self.tools:
+            if tool.name not in selected_names:
+                continue
+
+            tool_node = ("tool", tool.name)
+            graph.add_node(tool_node, type="tool", name=tool.name)
+            for artifact in tool.inputs:
+                artifact_node = ("artifact", artifact.name)
+                graph.add_node(
+                    artifact_node,
+                    type="artifact",
+                    name=artifact.name,
+                )
+                graph.add_edge(artifact_node, tool_node, type="input")
+            for artifact in tool.outputs:
+                artifact_node = ("artifact", artifact.name)
+                graph.add_node(
+                    artifact_node,
+                    type="artifact",
+                    name=artifact.name,
+                )
+                graph.add_edge(tool_node, artifact_node, type="output")
+
+        return graph
 
     def to_tool_dependency_matrix(self) -> ToolDependencyMatrix:
         """
@@ -145,20 +194,20 @@ class Network(
         """
         conflicts = {}
 
-        for node, data in self.G.nodes(data=True):
-            if data["type"] != "artifact":
-                continue
-
+        for artifact_name in self.artifact_names:
             producer_names = {
-                predecessor
-                for predecessor in self.G.predecessors(node)
-                if self.G.nodes[predecessor]["type"] == "tool"
+                tool.name
+                for tool in self.tools
+                if any(
+                    artifact.name == artifact_name
+                    for artifact in tool.outputs
+                )
             }
 
             if len(producer_names) < 2:
                 continue
 
-            conflicts[node] = [
+            conflicts[artifact_name] = [
                 tool.name
                 for tool in self.tools
                 if tool.name in producer_names
