@@ -7,6 +7,11 @@ name = "artifactflow"
 version = "0.1.0"
 description = "Artifact-aware workflow synthesis and orchestration by matching tool inputs, outputs, and dependencies."
 license = { text = "MIT" }
+dependencies = [
+    "matplotlib",
+    "networkx",
+    "numpy",
+]
 keywords = [
     "artifacts",
     "orchestration",

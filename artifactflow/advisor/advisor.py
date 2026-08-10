@@ -164,7 +164,9 @@ class Advisor:
     decision visit. Once the current decision is exhausted, the nearest
     earlier decision with alternatives is restored. A target candidate
     requires acceptance only when a continuation can produce a fresh
-    candidate.
+    candidate. ``character`` accepts an :class:`AdvisorCharacter`; its
+    ``normativity`` may be any number from 0.0 through 1.0, not only one of
+    the named presets.
     """
 
     def __init__(

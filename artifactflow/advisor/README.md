@@ -148,6 +148,29 @@ The Advisor's character changes the ordering of valid options. A normative
 Advisor favors proposed Plans; a homophilic Advisor favors continuing the
 LLM's observed direction. Character changes ordering, not validity.
 
+### Continuous character
+
+Character is continuous rather than limited to three presets. Configure it
+with an `AdvisorCharacter` whose `normativity` is between `0.0` and `1.0`:
+
+```python
+from artifactflow import Advisor, AdvisorCharacter
+
+advisor = Advisor(
+    project,
+    character=AdvisorCharacter(normativity=0.8),
+)
+```
+
+`normativity=1.0` ranks entirely by adherence to the proposed Plan, while
+`normativity=0.0` ranks entirely by continuity with the LLM's observed
+direction. Intermediate values blend those costs; for example, `0.8` is
+strongly normative and `0.3` mostly favors the LLM's direction. Homophily is
+the complement, `1.0 - normativity`.
+
+`NORMATIVE`, `BALANCED`, and `HOMOPHILIC` are convenience presets for `1.0`,
+`0.5`, and `0.0`. They do not restrict the available character values.
+
 ## Exact artifact versions
 
 The same tool may appear more than once when it can run from different
