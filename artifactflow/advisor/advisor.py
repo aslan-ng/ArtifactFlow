@@ -172,11 +172,11 @@ class Advisor:
     def __init__(
         self,
         project: Project,
+        *,
         lookahead_depth: int = 1,
         max_options: int | None = None,
         character: AdvisorCharacter = NORMATIVE,
         advice_history: AdviceHistory | None = None,
-        *,
         max_retries: int = 1,
     ) -> None:
         if isinstance(lookahead_depth, bool) or not isinstance(

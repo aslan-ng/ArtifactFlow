@@ -25,7 +25,8 @@ class CandidateTransition(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class AdvisorCharacter:
-    """Balance adherence to advice against following the agent's direction.
+    """
+    Balance adherence to advice against following the agent's direction.
 
     ``normativity=1`` ranks only by candidate scope. ``normativity=0``
     ranks only by the transition from the current direction. Intermediate
