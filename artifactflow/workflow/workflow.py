@@ -22,7 +22,9 @@ def _has_positive_length_path(
     start: Hashable,
     target: Hashable,
 ) -> bool:
-    """Return whether a directed path traverses at least one edge."""
+    """
+    Return whether a directed path traverses at least one edge.
+    """
     if start not in graph or target not in graph:
         return False
     if start != target:
@@ -79,7 +81,9 @@ class Workflow(
         self.target_artifacts: list[str] | None = None
 
     def to_tool_network(self) -> ToolNetwork:
-        """Return an independent tool network with the same definition."""
+        """
+        Return an independent tool network with the same definition.
+        """
         from artifactflow.tool_network.tool_network import ToolNetwork
 
         tool_network = ToolNetwork()
@@ -94,7 +98,8 @@ class Workflow(
         starting_artifacts: Iterable[str] | None = None,
         target_artifacts: Iterable[str] | None = None,
     ) -> list[Plan]:
-        """Return every causally distinct target-reaching plan.
+        """
+        Return every causally distinct target-reaching plan.
 
         Alternative producer bindings create separate plans, including a
         meaningful refinement route whose tool set contains a shorter direct
@@ -163,7 +168,9 @@ class Workflow(
         starting_artifacts: tuple[str, ...],
         target_artifacts: tuple[str, ...],
     ) -> bool:
-        """Return whether one producer-resolved route is a complete plan."""
+        """
+        Return whether one producer-resolved route is a complete plan.
+        """
         if {
             target_name
             for target_name, _producer_names in route.target_producers
@@ -216,7 +223,9 @@ class Workflow(
         self,
         tool_names: str | Iterable[str],
     ) -> tuple[str, ...]:
-        """Return tools that consume an output of the given tool or tools."""
+        """
+        Return tools that consume an output of the given tool or tools.
+        """
         names = (
             (tool_names,)
             if isinstance(tool_names, str)

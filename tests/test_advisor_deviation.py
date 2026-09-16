@@ -10,7 +10,9 @@ from artifactflow.advisor import (
 
 
 def make_branching_workflow() -> Workflow:
-    """Return two plans with one shared prefix and distinct finishes."""
+    """
+    Return two plans with one shared prefix and distinct finishes.
+    """
     start = Artifact("Start")
     prepared = Artifact("Prepared")
     route_a = Artifact("Route A")
@@ -32,7 +34,9 @@ def make_branching_workflow() -> Workflow:
 
 
 def make_network_deviation_project() -> Project:
-    """Return a linear workflow inside a network with one extra route."""
+    """
+    Return a linear workflow inside a network with one extra route.
+    """
     start = Artifact("Start")
     prepared = Artifact("Prepared")
     preferred = Artifact("Preferred draft")
@@ -76,7 +80,9 @@ def make_network_deviation_project() -> Project:
 
 
 def make_dead_workflow_continuation_project() -> Project:
-    """Return a network deviation with one useless Workflow consumer."""
+    """
+    Return a network deviation with one useless Workflow consumer.
+    """
     start = Artifact("Start")
     prepared = Artifact("Prepared")
     preferred = Artifact("Preferred draft")

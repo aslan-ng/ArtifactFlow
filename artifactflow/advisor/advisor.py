@@ -1,4 +1,6 @@
-"""Directions for progressing through an artifact workflow."""
+"""
+Directions for progressing through an artifact workflow.
+"""
 
 from __future__ import annotations
 
@@ -45,7 +47,8 @@ CommandStatus = Literal["COMMAND", "COMPLETE", "BLOCKED"]
 
 @dataclass(frozen=True, slots=True)
 class ToolOption:
-    """An executable root tool or a future tool shown in its preview.
+    """
+    An executable root tool or a future tool shown in its preview.
 
     Only options directly inside ``AdvisorCommand.options`` are executable.
     Nested ``continuations`` show what may follow if their parent succeeds.
@@ -76,7 +79,9 @@ class ToolOption:
 
 @dataclass(frozen=True, slots=True)
 class DeviationContext:
-    """The latest observed tool call that did not follow visible advice."""
+    """
+    The latest observed tool call that did not follow visible advice.
+    """
 
     observed_tool: str
     location: ActionLocation
@@ -85,7 +90,9 @@ class DeviationContext:
 
 @dataclass(frozen=True, slots=True)
 class AdvisorCommand:
-    """One self-contained direction returned by the Advisor."""
+    """
+    One self-contained direction returned by the Advisor.
+    """
 
     status: CommandStatus
     options: tuple[ToolOption, ...] = ()
@@ -98,7 +105,9 @@ class AdvisorCommand:
 
 @dataclass(slots=True)
 class _AdviceState:
-    """Active artifacts and tools at one point along the selected route."""
+    """
+    Active artifacts and tools at one point along the selected route.
+    """
 
     available_artifacts: set[str]
     active_artifacts: dict[str, ArtifactVersion]
@@ -114,7 +123,9 @@ class _AdviceState:
 
 @dataclass(slots=True)
 class _DecisionFrame:
-    """A restorable tool choice encountered along the active route."""
+    """
+    A restorable tool choice encountered along the active route.
+    """
 
     checkpoint: _AdviceState
     options: tuple[str, ...]
@@ -125,7 +136,9 @@ class _DecisionFrame:
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
-    """One policy-neutral way to issue the next concrete tool command."""
+    """
+    One policy-neutral way to issue the next concrete tool command.
+    """
 
     tool_name: str
     scope: CandidateScope
@@ -140,7 +153,9 @@ class _Candidate:
 
 @dataclass(slots=True)
 class _ReplayState:
-    """State reconstructed from the complete project event log."""
+    """
+    State reconstructed from the complete project event log.
+    """
 
     active: _AdviceState
     decisions: list[_DecisionFrame]
@@ -271,27 +286,37 @@ class Advisor:
 
     @property
     def bootstrap_artifacts(self) -> tuple[str, ...]:
-        """Return artifacts bootstrapped on at least one possible route."""
+        """
+        Return artifacts bootstrapped on at least one possible route.
+        """
         return self._bootstrap_artifacts
 
     @property
     def mandatory_bootstrap_artifacts(self) -> tuple[str, ...]:
-        """Return bootstrap artifacts required by every possible route."""
+        """
+        Return bootstrap artifacts required by every possible route.
+        """
         return self._mandatory_bootstrap_artifacts
 
     @property
     def conditional_bootstrap_artifacts(self) -> tuple[str, ...]:
-        """Return bootstrap artifacts required only by some routes."""
+        """
+        Return bootstrap artifacts required only by some routes.
+        """
         return self._conditional_bootstrap_artifacts
 
     @property
     def max_retries(self) -> int:
-        """Return the fixed retry allowance for each option visit."""
+        """
+        Return the fixed retry allowance for each option visit.
+        """
         return self._max_retries
 
     @property
     def _configuration(self) -> Hashable:
-        """Return the settings that make one advice snapshot reproducible."""
+        """
+        Return the settings that make one advice snapshot reproducible.
+        """
         return (
             self.lookahead_depth,
             self.max_options,
@@ -300,7 +325,8 @@ class Advisor:
         )
 
     def advise(self) -> AdvisorCommand:
-        """Return current advice reconstructed from the execution log.
+        """
+        Return current advice reconstructed from the execution log.
 
         A runtime observer, raw-log adapter, or simulation records activity on
         the Project separately. The execution log remains factual; this method
@@ -325,7 +351,9 @@ class Advisor:
         return command
 
     def _build_command(self, replay: _ReplayState) -> AdvisorCommand:
-        """Build advice from one reconstructed project state."""
+        """
+        Build advice from one reconstructed project state.
+        """
         state = replay.active
         targets_ready = self._targets_ready(state)
         acceptance_required = self._acceptance_required(state)
@@ -412,7 +440,9 @@ class Advisor:
         self,
         events: tuple[ProjectEvent, ...],
     ) -> _ReplayState:
-        """Reconstruct active advice state from ordered factual events."""
+        """
+        Reconstruct active advice state from ordered factual events.
+        """
         initial_state = self._initial_state()
         replay = _ReplayState(
             active=initial_state,
@@ -633,7 +663,8 @@ class Advisor:
         replay: _ReplayState,
         inputs: tuple[ArtifactVersion, ...],
     ) -> None:
-        """Bind one observed call to the exact artifact versions it used.
+        """
+        Bind one observed call to the exact artifact versions it used.
 
         Unlike an externally supplied artifact, an older input chosen for one
         call changes only that active attempt and its retry checkpoint. It
@@ -665,7 +696,9 @@ class Advisor:
         self,
         event: ToolSucceeded | ToolFailed,
     ) -> None:
-        """Check that observed artifact roles match the workflow schema."""
+        """
+        Check that observed artifact roles match the workflow schema.
+        """
         tool = self.project.tool(event.tool_name)
         expected_inputs = {
             artifact.name
@@ -722,7 +755,9 @@ class Advisor:
         self._backtrack(replay)
 
     def _can_retry(self, failure_count: int) -> bool:
-        """Return whether one more attempt is allowed after these failures."""
+        """
+        Return whether one more attempt is allowed after these failures.
+        """
         return 0 < failure_count <= self.max_retries
 
     def _record_success(
@@ -806,7 +841,9 @@ class Advisor:
                 return
 
     def _reject_target_candidate(self, replay: _ReplayState) -> None:
-        """Choosing a continuation means the current candidate is rejected."""
+        """
+        Choosing a continuation means the current candidate is rejected.
+        """
         if not self._targets_ready(replay.active):
             return
 
@@ -952,7 +989,8 @@ class Advisor:
         state: _AdviceState,
         plans: Iterable[Plan],
     ) -> tuple[str, ...]:
-        """Return tools that can advance at least one active Plan.
+        """
+        Return tools that can advance at least one active Plan.
 
         Independent roots in the same Plan remain available until they have
         all run, which makes joins work. A downstream tool waits for its
@@ -1072,7 +1110,8 @@ class Advisor:
         self,
         replay: _ReplayState,
     ) -> tuple[_Candidate, ...]:
-        """Build, merge, and rank valid next commands.
+        """
+        Build, merge, and rank valid next commands.
 
         The current decision supplies continuations from the observed state.
         While handling a deviation, restorable alternatives from earlier
@@ -1665,7 +1704,9 @@ class Advisor:
         plans: Iterable[Plan],
         tool_name: str,
     ) -> tuple[Plan, ...]:
-        """Return Plans for which a tool is valid at this exact state."""
+        """
+        Return Plans for which a tool is valid at this exact state.
+        """
         return tuple(
             plan
             for plan in plans
@@ -1678,7 +1719,8 @@ class Advisor:
         tool_name: str,
         plans: Iterable[Plan],
     ) -> tuple[tuple[tuple[str, ...], CycleAction], ...]:
-        """Return this move's role at each entered structural cycle.
+        """
+        Return this move's role at each entered structural cycle.
 
         Completed cycle members, rather than only the globally last tool,
         identify an active optimization visit. Independent prerequisite work
@@ -1737,7 +1779,9 @@ class Advisor:
         state: _AdviceState,
         candidates: Iterable[_Candidate],
     ) -> tuple[_Candidate, ...]:
-        """Expose cycle roles only at a real repeat-versus-exit gate."""
+        """
+        Expose cycle roles only at a real repeat-versus-exit gate.
+        """
         candidates = tuple(candidates)
         roles_by_candidate = tuple(
             dict(self._cycle_roles(
@@ -1879,7 +1923,9 @@ class Advisor:
         replay: _ReplayState,
         candidate: _Candidate,
     ) -> tuple[tuple[str, int], ...]:
-        """Return the exact active inputs that identify one command."""
+        """
+        Return the exact active inputs that identify one command.
+        """
         state = self._candidate_state(replay, candidate)
         return self._state_input_artifacts(candidate.tool_name, state)
 
@@ -1912,7 +1958,9 @@ class Advisor:
         tool_name: str,
         event_inputs: tuple[tuple[str, int], ...],
     ) -> bool:
-        """Match exact known bindings while allowing newly supplied inputs."""
+        """
+        Match exact known bindings while allowing newly supplied inputs.
+        """
         if option.tool_name != tool_name:
             return False
         actual = dict(event_inputs)
@@ -1942,7 +1990,9 @@ class Advisor:
         self,
         replay: _ReplayState,
     ) -> tuple[str, ...]:
-        """Return every structurally valid root option in priority order."""
+        """
+        Return every structurally valid root option in priority order.
+        """
         if replay.blocked or not replay.decisions:
             return ()
 
@@ -2156,7 +2206,9 @@ class Advisor:
         state: _AdviceState,
         parent: _Candidate | None,
     ) -> tuple[_Candidate, ...]:
-        """Rank success-assuming preview branches like executable roots."""
+        """
+        Rank success-assuming preview branches like executable roots.
+        """
         candidates: list[_Candidate] = []
         for stable_order, tool_name in enumerate(state.next_tools):
             inherited_plans = self._frontier_plans(
@@ -2218,7 +2270,9 @@ class Advisor:
         state: _AdviceState,
         visits: dict[tuple, int] | None = None,
     ) -> tuple[frozenset[str], ...]:
-        """Return the missing external artifacts for each remaining route."""
+        """
+        Return the missing external artifacts for each remaining route.
+        """
         if self._targets_ready(state):
             return (frozenset(),)
 
@@ -2259,14 +2313,18 @@ class Advisor:
         )
 
     def _acceptance_required(self, state: _AdviceState) -> bool:
-        """Return whether a continuation can produce a fresh candidate."""
+        """
+        Return whether a continuation can produce a fresh candidate.
+        """
         return bool(self._renewable_targets(state))
 
     def _renewable_targets(
         self,
         state: _AdviceState,
     ) -> tuple[str, ...]:
-        """Return ready targets that a continuation can produce again."""
+        """
+        Return ready targets that a continuation can produce again.
+        """
         if not self._targets_ready(state) or not state.next_tools:
             return ()
 

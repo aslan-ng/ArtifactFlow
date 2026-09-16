@@ -1,4 +1,6 @@
-"""Continue a target-producing cycle and accept its third candidate."""
+"""
+Continue a target-producing cycle and accept its third candidate.
+"""
 
 from artifactflow import Advisor, Project
 

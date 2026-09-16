@@ -1,4 +1,6 @@
-"""Exhaust a nested branch, then restore an earlier decision point."""
+"""
+Exhaust a nested branch, then restore an earlier decision point.
+"""
 
 from artifactflow import Advisor, Project
 

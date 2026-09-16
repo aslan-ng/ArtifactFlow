@@ -1,4 +1,6 @@
-"""Provide bootstrap artifacts only when the chosen tool needs them."""
+"""
+Provide bootstrap artifacts only when the chosen tool needs them.
+"""
 
 from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_1 as workflow

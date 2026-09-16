@@ -1,4 +1,6 @@
-"""Limit advice to one option, then exhaust every route."""
+"""
+Limit advice to one option, then exhaust every route.
+"""
 
 from artifactflow import Advisor, Project
 

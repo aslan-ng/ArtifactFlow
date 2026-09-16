@@ -1,4 +1,6 @@
-"""Immutable records of advice shown at each observed project state."""
+"""
+Immutable records of advice shown at each observed project state.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +22,9 @@ _ANY_CONFIGURATION: Hashable = object()
 
 @dataclass(frozen=True, slots=True)
 class AdvisedOption:
-    """The concrete tool state represented by one visible root option."""
+    """
+    The concrete tool state represented by one visible root option.
+    """
 
     tool_name: str
     input_artifacts: tuple[ArtifactBinding, ...] = ()
@@ -47,7 +51,8 @@ class AdvisedOption:
 
 @dataclass(frozen=True, slots=True)
 class AdviceSnapshot:
-    """Advice issued after a particular number of project events.
+    """
+    Advice issued after a particular number of project events.
 
     ``event_position`` is the number of execution events already observed
     when the advice was issued. Public Plan metadata uses ordered tool-name
@@ -76,12 +81,16 @@ class AdviceSnapshot:
 
     @property
     def visible_root_tools(self) -> tuple[str, ...]:
-        """Return visible tool names, including version-specific repeats."""
+        """
+        Return visible tool names, including version-specific repeats.
+        """
         return tuple(option.tool_name for option in self.options)
 
     @property
     def supporting_plan_signatures(self) -> SupportingPlanSignatures:
-        """Return the legacy positional view of option Plan signatures."""
+        """
+        Return the legacy positional view of option Plan signatures.
+        """
         return tuple(
             (option.tool_name, option.supporting_plan_signatures)
             for option in self.options
@@ -97,7 +106,9 @@ class AdviceSnapshot:
         supporting_plans: Mapping[str, Iterable[Plan]] | None = None,
         options: Iterable[AdvisedOption] | None = None,
     ) -> AdviceSnapshot:
-        """Create a validated snapshot from the Plans behind each option."""
+        """
+        Create a validated snapshot from the Plans behind each option.
+        """
         _validate_event_position(event_position)
         _validate_configuration(configuration)
 
@@ -179,7 +190,8 @@ class AdviceSnapshot:
         tool_name: str,
         input_artifacts: tuple[ArtifactBinding, ...] | None = None,
     ) -> tuple[PlanSignature, ...]:
-        """Return Plans for a tool, optionally at one exact input state.
+        """
+        Return Plans for a tool, optionally at one exact input state.
 
         Omitting ``input_artifacts`` preserves the original tool-name lookup
         and combines signatures across every visible state of that tool.
@@ -205,7 +217,9 @@ class AdviceSnapshot:
         tool_name: str,
         input_artifacts: tuple[ArtifactBinding, ...] | None = None,
     ) -> tuple[PlanRouteKey, ...]:
-        """Return exact producer-resolved route keys for one tool state."""
+        """
+        Return exact producer-resolved route keys for one tool state.
+        """
         if not isinstance(tool_name, str):
             raise TypeError("tool_name must be a string.")
         if input_artifacts is not None:
@@ -226,7 +240,9 @@ class AdviceSnapshot:
         tool_name: str,
         input_artifacts: tuple[ArtifactBinding, ...] = (),
     ) -> AdvisedOption | None:
-        """Return one visible option by its exact tool and input state."""
+        """
+        Return one visible option by its exact tool and input state.
+        """
         if not isinstance(tool_name, str):
             raise TypeError("tool_name must be a string.")
         _validate_artifact_bindings(input_artifacts)
@@ -242,7 +258,8 @@ class AdviceSnapshot:
 
 
 class AdviceHistory:
-    """Store one deterministic advice snapshot per state and configuration.
+    """
+    Store one deterministic advice snapshot per state and configuration.
 
     Calling ``record`` again without a new project event and with the same
     configuration returns the original object. Different advice for that
@@ -257,7 +274,9 @@ class AdviceHistory:
 
     @property
     def snapshots(self) -> tuple[AdviceSnapshot, ...]:
-        """Return every distinct snapshot in recording order."""
+        """
+        Return every distinct snapshot in recording order.
+        """
         return tuple(self._snapshots)
 
     def __len__(self) -> int:
@@ -275,7 +294,8 @@ class AdviceHistory:
         supporting_plans: Mapping[str, Iterable[Plan]] | None = None,
         options: Iterable[AdvisedOption] | None = None,
     ) -> AdviceSnapshot:
-        """Record advice, or reuse the snapshot for an unchanged state.
+        """
+        Record advice, or reuse the snapshot for an unchanged state.
 
         ``options`` records exact tool/input-version identities. The older
         ``visible_root_tools`` and ``supporting_plans`` arguments remain for
@@ -310,7 +330,9 @@ class AdviceHistory:
         event_position: int,
         configuration: Hashable,
     ) -> AdviceSnapshot | None:
-        """Return the snapshot for an exact state/configuration pair."""
+        """
+        Return the snapshot for an exact state/configuration pair.
+        """
         _validate_event_position(event_position)
         _validate_configuration(configuration)
         return self._by_key.get((event_position, configuration))
@@ -319,7 +341,9 @@ class AdviceHistory:
         self,
         configuration: Hashable = _ANY_CONFIGURATION,
     ) -> AdviceSnapshot | None:
-        """Return the most recently recorded matching snapshot."""
+        """
+        Return the most recently recorded matching snapshot.
+        """
         if configuration is not _ANY_CONFIGURATION:
             _validate_configuration(configuration)
         return next(
@@ -337,7 +361,8 @@ class AdviceHistory:
         event_position: int,
         configuration: Hashable = _ANY_CONFIGURATION,
     ) -> AdviceSnapshot | None:
-        """Return the latest advice issued before an event position.
+        """
+        Return the latest advice issued before an event position.
 
         The comparison is strict. For example, advice at position two was
         issued after two events and is the advice preceding position three.

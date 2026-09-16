@@ -1,4 +1,6 @@
-"""Define a workflow with nested choices for backtracking."""
+"""
+Define a workflow with nested choices for backtracking.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 

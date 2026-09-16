@@ -1,4 +1,6 @@
-"""See a retry and a sibling alternative after a failure."""
+"""
+See a retry and a sibling alternative after a failure.
+"""
 
 from artifactflow import Advisor, Project
 

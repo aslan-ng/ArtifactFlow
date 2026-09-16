@@ -1,4 +1,6 @@
-"""See route-dependent needs before choosing a route."""
+"""
+See route-dependent needs before choosing a route.
+"""
 
 from artifactflow import Advisor, Project
 

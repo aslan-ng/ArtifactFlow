@@ -12,7 +12,9 @@ from artifactflow.workflow.workflow import Workflow
 
 
 class SimilarityGraphics:
-    """Plot workflow similarities relative to a reference workflow."""
+    """
+    Plot workflow similarities relative to a reference workflow.
+    """
 
     def __init__(
         self,

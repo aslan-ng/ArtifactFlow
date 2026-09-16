@@ -1,4 +1,6 @@
-"""The canonical execution history for one project."""
+"""
+The canonical execution history for one project.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +17,9 @@ def _validate_name(value: str, field_name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class FileReference:
-    """A reference to one immutable, version-specific file."""
+    """
+    A reference to one immutable, version-specific file.
+    """
 
     location: str
     name: str = ""
@@ -44,7 +48,9 @@ class FileReference:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactOutput:
-    """An unversioned artifact value returned by a successful tool."""
+    """
+    An unversioned artifact value returned by a successful tool.
+    """
 
     artifact_name: str
     value: object | None = None
@@ -63,7 +69,9 @@ class ArtifactOutput:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactVersion:
-    """One immutable occurrence of a named artifact."""
+    """
+    One immutable occurrence of a named artifact.
+    """
 
     artifact_name: str
     version: int
@@ -90,7 +98,9 @@ class ArtifactVersion:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactAvailable:
-    """An artifact version was obtained outside the workflow."""
+    """
+    An artifact version was obtained outside the workflow.
+    """
 
     artifact: ArtifactVersion
 
@@ -100,13 +110,17 @@ class ArtifactAvailable:
 
     @property
     def artifact_name(self) -> str:
-        """Return the workflow artifact name for compatibility."""
+        """
+        Return the workflow artifact name for compatibility.
+        """
         return self.artifact.artifact_name
 
 
 @dataclass(frozen=True, slots=True)
 class ToolSucceeded:
-    """A tool completed using exact inputs and created new outputs."""
+    """
+    A tool completed using exact inputs and created new outputs.
+    """
 
     tool_name: str
     inputs: tuple[ArtifactVersion, ...] = ()
@@ -127,7 +141,9 @@ class ToolSucceeded:
 
 @dataclass(frozen=True, slots=True)
 class ToolFailed:
-    """One tool attempt failed after using the recorded inputs."""
+    """
+    One tool attempt failed after using the recorded inputs.
+    """
 
     tool_name: str
     reason: str | None = None
@@ -147,7 +163,9 @@ class ToolFailed:
 
 @dataclass(frozen=True, slots=True)
 class TargetsAccepted:
-    """The recorded target versions passed the project checks."""
+    """
+    The recorded target versions passed the project checks.
+    """
 
     targets: tuple[ArtifactVersion, ...] = ()
 
@@ -169,7 +187,8 @@ ProjectEvent = (
 
 
 class ExecutionLog:
-    """An ordered, append-only collection of observed project events.
+    """
+    An ordered, append-only collection of observed project events.
 
     Client-specific adapters translate raw LLM or MCP activity into these
     records. This class deliberately stores only normalized execution facts;
@@ -183,11 +202,15 @@ class ExecutionLog:
 
     @property
     def events(self) -> tuple[ProjectEvent, ...]:
-        """Return an immutable view of the complete event history."""
+        """
+        Return an immutable view of the complete event history.
+        """
         return tuple(self._events)
 
     def append(self, event: ProjectEvent) -> None:
-        """Validate and atomically append one observed event."""
+        """
+        Validate and atomically append one observed event.
+        """
         if not isinstance(
             event,
             (
@@ -230,7 +253,9 @@ class ExecutionLog:
         value: object | None = None,
         file: FileReference | None = None,
     ) -> ArtifactVersion:
-        """Record and return the next externally supplied version."""
+        """
+        Record and return the next externally supplied version.
+        """
         artifact = ArtifactVersion(
             artifact_name=artifact_name,
             version=self._next_version(artifact_name),
@@ -246,7 +271,9 @@ class ExecutionLog:
         inputs: Iterable[ArtifactVersion] = (),
         outputs: Iterable[ArtifactOutput] = (),
     ) -> ToolSucceeded:
-        """Record a successful call and assign versions to its outputs."""
+        """
+        Record a successful call and assign versions to its outputs.
+        """
         input_versions = tuple(inputs)
         output_values = tuple(outputs)
         if not all(
@@ -286,7 +313,9 @@ class ExecutionLog:
         reason: str | None = None,
         inputs: Iterable[ArtifactVersion] = (),
     ) -> ToolFailed:
-        """Record and return one failed tool attempt."""
+        """
+        Record and return one failed tool attempt.
+        """
         event = ToolFailed(
             tool_name=tool_name,
             reason=reason,
@@ -299,20 +328,25 @@ class ExecutionLog:
         self,
         targets: Iterable[ArtifactVersion] = (),
     ) -> TargetsAccepted:
-        """Record acceptance of exact target versions."""
+        """
+        Record acceptance of exact target versions.
+        """
         event = TargetsAccepted(tuple(targets))
         self.append(event)
         return event
 
     def history(self, artifact_name: str) -> tuple[ArtifactVersion, ...]:
-        """Return every recorded version of an artifact in order."""
+        """
+        Return every recorded version of an artifact in order.
+        """
         return tuple(self._history.get(artifact_name, ()))
 
     def latest_recorded(
         self,
         artifact_name: str,
     ) -> ArtifactVersion | None:
-        """Return the latest recorded version, or None when absent.
+        """
+        Return the latest recorded version, or None when absent.
 
         This is a history-wide lookup. During recovery, the Advisor may use
         an older version that belongs to the restored active route.
@@ -321,7 +355,9 @@ class ExecutionLog:
         return versions[-1] if versions else None
 
     def latest(self, artifact_name: str) -> ArtifactVersion | None:
-        """Short alias for :meth:`latest_recorded`."""
+        """
+        Short alias for :meth:`latest_recorded`.
+        """
         return self.latest_recorded(artifact_name)
 
     def artifact(
@@ -329,7 +365,9 @@ class ExecutionLog:
         artifact_name: str,
         version: int,
     ) -> ArtifactVersion:
-        """Return one exact artifact version."""
+        """
+        Return one exact artifact version.
+        """
         try:
             return self._artifacts[(artifact_name, version)]
         except KeyError:

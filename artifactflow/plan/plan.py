@@ -1,4 +1,6 @@
-"""One target-reaching plan selected from a workflow."""
+"""
+One target-reaching plan selected from a workflow.
+"""
 
 from __future__ import annotations
 
@@ -29,26 +31,34 @@ PlanRouteKey: TypeAlias = tuple[
 
 @dataclass(frozen=True, slots=True)
 class PlanRequirements:
-    """External inputs and one chosen bootstrap set for one plan."""
+    """
+    External inputs and one chosen bootstrap set for one plan.
+    """
 
     external_artifacts: frozenset[str]
     bootstrap_artifacts: frozenset[str]
 
     @property
     def initial_artifacts(self) -> frozenset[str]:
-        """Return everything that must be available to start the plan."""
+        """
+        Return everything that must be available to start the plan.
+        """
         return self.external_artifacts | self.bootstrap_artifacts
 
     @property
     def is_satisfied(self) -> bool:
-        """Return whether this requirement set is empty."""
+        """
+        Return whether this requirement set is empty.
+        """
         return not self.initial_artifacts
 
     def missing(
         self,
         available_artifacts: Iterable[str],
     ) -> PlanRequirements:
-        """Return requirements not present in an available artifact set."""
+        """
+        Return requirements not present in an available artifact set.
+        """
         available = _artifact_names(available_artifacts)
         return PlanRequirements(
             external_artifacts=self.external_artifacts - available,
@@ -57,7 +67,8 @@ class PlanRequirements:
 
 
 class Plan(Network):
-    """A target-reaching subset of a workflow.
+    """
+    A target-reaching subset of a workflow.
 
     A discovered plan contains the tools and selected producer bindings for
     one possible route through a workflow. Two plans may contain the same
@@ -79,14 +90,17 @@ class Plan(Network):
 
     @property
     def has_explicit_producers(self) -> bool:
-        """Return whether this Plan carries route-specific producer edges."""
+        """
+        Return whether this Plan carries route-specific producer edges.
+        """
         return self._input_producers is not None
 
     @property
     def input_producers(
         self,
     ) -> tuple[InputProducerBinding, ...]:
-        """Return route-specific producers for every concrete tool input.
+        """
+        Return route-specific producers for every concrete tool input.
 
         An empty producer tuple means that the input is external to this
         Plan. The property is empty for legacy or manually assembled Plans
@@ -102,14 +116,17 @@ class Plan(Network):
 
     @property
     def target_producers(self) -> tuple[TargetProducerBinding, ...]:
-        """Return the producers selected for each target artifact."""
+        """
+        Return the producers selected for each target artifact.
+        """
         if self._target_producers is None:
             return ()
         return tuple(self._target_producers.items())
 
     @property
     def route_key(self) -> PlanRouteKey:
-        """Return a stable identity including route-specific provenance.
+        """
+        Return a stable identity including route-specific provenance.
 
         Tool names alone are not sufficient: two routes may contain exactly
         the same tools while binding a shared input to different producers.
@@ -129,7 +146,8 @@ class Plan(Network):
             Iterable[str],
         ],
     ) -> None:
-        """Bind each tool input to the producers selected for this route.
+        """
+        Bind each tool input to the producers selected for this route.
 
         Discovered Plans use these bindings to distinguish, for example, a
         direct producer from a longer refinement producer even when both
@@ -214,7 +232,9 @@ class Plan(Network):
         self,
         producers: Mapping[str, Iterable[str]],
     ) -> None:
-        """Bind every target artifact to this route's selected producers."""
+        """
+        Bind every target artifact to this route's selected producers.
+        """
         if not isinstance(producers, Mapping):
             raise TypeError("producers must be a mapping.")
         if self.target_artifacts is None:
@@ -293,7 +313,9 @@ class Plan(Network):
         tool_name: str,
         artifact_name: str,
     ) -> tuple[str, ...]:
-        """Return producer tools selected for one input in this Plan."""
+        """
+        Return producer tools selected for one input in this Plan.
+        """
         key = (tool_name, artifact_name)
         if self._input_producers is not None:
             if key not in self._input_producers:
@@ -311,7 +333,9 @@ class Plan(Network):
         )
 
     def to_tool_dependency_graph(self) -> nx.DiGraph:
-        """Return the producer-resolved tool graph for this Plan."""
+        """
+        Return the producer-resolved tool graph for this Plan.
+        """
         if self._input_producers is None:
             return super().to_tool_dependency_graph()
 
@@ -343,7 +367,9 @@ class Plan(Network):
         tool_name: str,
         artifact_name: str,
     ) -> bool:
-        """Return whether an input is an edge inside a selected cycle."""
+        """
+        Return whether an input is an edge inside a selected cycle.
+        """
         producers = self.producers_for_input(tool_name, artifact_name)
         if not producers:
             return False
@@ -359,7 +385,8 @@ class Plan(Network):
         )
 
     def input_requirements(self) -> PlanRequirements:
-        """Return the plan's structural external and bootstrap inputs.
+        """
+        Return the plan's structural external and bootstrap inputs.
 
         External artifacts have no producer in this plan. Bootstrap artifacts
         do have a producer, but an initial version is needed to enter a cycle.
@@ -432,7 +459,9 @@ class Plan(Network):
         self,
         starting: set[str],
     ) -> PlanRequirements:
-        """Return requirements using this route's producer selections."""
+        """
+        Return requirements using this route's producer selections.
+        """
         external = {
             artifact.name
             for tool in self.tools
@@ -507,11 +536,15 @@ class Plan(Network):
         self,
         available_artifacts: Iterable[str],
     ) -> PlanRequirements:
-        """Return the plan requirements not currently available."""
+        """
+        Return the plan requirements not currently available.
+        """
         return self.input_requirements().missing(available_artifacts)
 
     def _can_run_once(self, initial_artifacts: set[str]) -> bool:
-        """Return whether every plan tool can run once from these artifacts."""
+        """
+        Return whether every plan tool can run once from these artifacts.
+        """
         available = set(initial_artifacts)
         executed: set[str] = set()
         remaining = list(self.tools)
@@ -568,7 +601,9 @@ class Plan(Network):
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> Plan:
-        """Create a plan containing the same tools and boundaries."""
+        """
+        Create a plan containing the same tools and boundaries.
+        """
         from artifactflow.workflow.workflow import Workflow
 
         if not isinstance(workflow, Workflow):

@@ -1,4 +1,6 @@
-"""Define a workflow with two routes to the same target."""
+"""
+Define a workflow with two routes to the same target.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 

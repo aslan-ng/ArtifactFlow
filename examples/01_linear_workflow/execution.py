@@ -1,4 +1,6 @@
-"""Ask for one instruction at a time in a linear workflow."""
+"""
+Ask for one instruction at a time in a linear workflow.
+"""
 
 from artifactflow import Advisor, Project
 

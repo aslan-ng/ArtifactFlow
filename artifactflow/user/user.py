@@ -1,4 +1,6 @@
-"""External contributions to a project."""
+"""
+External contributions to a project.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +27,9 @@ class User:
         value: object | None = None,
         file: FileReference | None = None,
     ) -> ArtifactVersion:
-        """Record one external artifact, including its value or file."""
+        """
+        Record one external artifact, including its value or file.
+        """
         return self.project.record_artifact_available(
             artifact_name,
             value=value,
@@ -33,5 +37,7 @@ class User:
         )
 
     def accept_targets(self) -> None:
-        """Accept the target artifacts currently presented for review."""
+        """
+        Accept the target artifacts currently presented for review.
+        """
         self.project.record_target_acceptance()

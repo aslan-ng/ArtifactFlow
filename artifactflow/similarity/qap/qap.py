@@ -31,7 +31,9 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class QAPResult:
-    """Result of one typed-node QAP comparison."""
+    """
+    Result of one typed-node QAP comparison.
+    """
 
     network_a_name: str
     network_b_name: str
@@ -46,23 +48,31 @@ class QAPResult:
 
     @property
     def null_mean(self) -> float:
-        """Return the mean of the permutation null distribution."""
+        """
+        Return the mean of the permutation null distribution.
+        """
         return float(np.mean(self.null_distribution))
 
     @property
     def null_std(self) -> float:
-        """Return the sample standard deviation of the null distribution."""
+        """
+        Return the sample standard deviation of the null distribution.
+        """
         if self.permutations < 2:
             return 0.0
         return float(np.std(self.null_distribution, ddof=1))
 
     def is_significant(self, alpha: float = 0.05) -> bool:
-        """Return whether the result is statistically significant."""
+        """
+        Return whether the result is statistically significant.
+        """
         _validate_alpha(alpha)
         return self.p_value < alpha
 
     def interpretation(self, alpha: float = 0.05) -> str:
-        """Return a concise interpretation of the comparison."""
+        """
+        Return a concise interpretation of the comparison.
+        """
         _validate_alpha(alpha)
 
         if not self.is_significant(alpha):
@@ -88,7 +98,9 @@ class QAPResult:
         )
 
     def summary(self, *, alpha: float = 0.05) -> str:
-        """Return a readable multiline summary."""
+        """
+        Return a readable multiline summary.
+        """
         _validate_alpha(alpha)
         separator = "=" * 64
 
@@ -113,7 +125,9 @@ class QAPResult:
         )
 
     def print_summary(self, *, alpha: float = 0.05) -> None:
-        """Print a readable multiline summary."""
+        """
+        Print a readable multiline summary.
+        """
         print(self.summary(alpha=alpha))
 
 
@@ -192,27 +206,37 @@ class QAPStudy:
 
     @property
     def network_names(self) -> tuple[str, ...]:
-        """Return network names in their registered order."""
+        """
+        Return network names in their registered order.
+        """
         return self._network_names
 
     @property
     def nodelist(self) -> tuple[Hashable, ...]:
-        """Return the shared global node order."""
+        """
+        Return the shared global node order.
+        """
         return self._nodes
 
     @property
     def node_count(self) -> int:
-        """Return the size of the global node universe."""
+        """
+        Return the size of the global node universe.
+        """
         return len(self._nodes)
 
     @property
     def permutations(self) -> int:
-        """Return the study's default permutation count."""
+        """
+        Return the study's default permutation count.
+        """
         return self._permutations
 
     @property
     def alternative(self) -> Alternative:
-        """Return the study's default alternative hypothesis."""
+        """
+        Return the study's default alternative hypothesis.
+        """
         return self._alternative
 
     def compare(
@@ -224,7 +248,9 @@ class QAPStudy:
         alternative: Alternative | None = None,
         random_state: int | np.random.Generator | None = None,
     ) -> QAPResult:
-        """Compare two registered networks."""
+        """
+        Compare two registered networks.
+        """
         self._validate_network_name(network_a_name)
         self._validate_network_name(network_b_name)
         if network_a_name == network_b_name:
@@ -260,7 +286,9 @@ class QAPStudy:
         network_a_name: str,
         network_b_name: str,
     ) -> float:
-        """Return the observed correlation without a permutation test."""
+        """
+        Return the observed correlation without a permutation test.
+        """
         self._validate_network_name(network_a_name)
         self._validate_network_name(network_b_name)
 
@@ -277,7 +305,9 @@ class QAPStudy:
         )
 
     def correlation_matrix(self) -> Array:
-        """Return the symmetric observed-correlation matrix."""
+        """
+        Return the symmetric observed-correlation matrix.
+        """
         matrix = np.eye(len(self._network_names), dtype=np.float64)
 
         for index_a, index_b in combinations(
@@ -298,7 +328,9 @@ class QAPStudy:
         permutations: int | None = None,
         alternative: Alternative | None = None,
     ) -> list[QAPResult]:
-        """Compare every unique pair of registered networks."""
+        """
+        Compare every unique pair of registered networks.
+        """
         return [
             self.compare(
                 network_a_name,
@@ -312,7 +344,9 @@ class QAPStudy:
         ]
 
     def get_graph(self, network_name: str, *, copy: bool = True) -> nx.Graph:
-        """Return one globally aligned graph."""
+        """
+        Return one globally aligned graph.
+        """
         self._validate_network_name(network_name)
         graph = self._graphs[network_name]
         return graph.copy() if copy else graph
@@ -362,7 +396,9 @@ def qap_compare(
     node_mapping_b: Mapping[Hashable, Hashable] | None = None,
     random_state: int | np.random.Generator | None = None,
 ) -> QAPResult:
-    """Compare two NetworkX graphs using a typed-node QAP test."""
+    """
+    Compare two NetworkX graphs using a typed-node QAP test.
+    """
     _validate_graph(graph_a, "graph_a")
     _validate_graph(graph_b, "graph_b")
     if graph_a.is_directed() != graph_b.is_directed():
@@ -435,7 +471,9 @@ def canonicalize_nodes(
     *,
     graph_name: str = "graph",
 ) -> nx.Graph:
-    """Return a graph copy whose local node IDs use canonical identities."""
+    """
+    Return a graph copy whose local node IDs use canonical identities.
+    """
     _validate_graph(graph, graph_name)
     if mapping is None:
         return graph.copy()
@@ -464,7 +502,9 @@ def align_node_universe(
     node_type_attr: str = "type",
     node_mappings: Sequence[Mapping[Hashable, Hashable] | None] | None = None,
 ) -> tuple[list[nx.Graph], list[Hashable]]:
-    """Copy graphs and align them to the union of their canonical node IDs."""
+    """
+    Copy graphs and align them to the union of their canonical node IDs.
+    """
     if len(graphs) < 2:
         raise ValueError("At least two graphs are required.")
 

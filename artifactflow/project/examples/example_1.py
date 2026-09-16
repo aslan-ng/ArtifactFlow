@@ -1,4 +1,6 @@
-"""Provide every possible bootstrap artifact before starting."""
+"""
+Provide every possible bootstrap artifact before starting.
+"""
 
 from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_1 as workflow

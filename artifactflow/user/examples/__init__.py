@@ -1,1 +1,3 @@
-"""Examples of project decisions made outside the core package."""
+"""
+Examples of project decisions made outside the core package.
+"""

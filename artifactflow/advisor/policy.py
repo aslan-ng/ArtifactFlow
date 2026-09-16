@@ -1,4 +1,6 @@
-"""Small, explainable policies for ordering valid advice candidates."""
+"""
+Small, explainable policies for ordering valid advice candidates.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +10,9 @@ import math
 
 
 class CandidateScope(IntEnum):
-    """How far a candidate moves from the Advisor's previous proposal."""
+    """
+    How far a candidate moves from the Advisor's previous proposal.
+    """
 
     PROPOSED_PLAN = 0
     WORKFLOW_PLAN = 1
@@ -52,7 +56,9 @@ class GuidancePolicy:
 
     @property
     def continuity_weight(self) -> float:
-        """Return the complementary preference for execution continuity."""
+        """
+        Return the complementary preference for execution continuity.
+        """
         return 1.0 - self.workflow_adherence
 
     def cost(
@@ -60,7 +66,9 @@ class GuidancePolicy:
         scope: CandidateScope,
         transition: CandidateTransition,
     ) -> float:
-        """Return the blended policy cost; lower values rank first."""
+        """
+        Return the blended policy cost; lower values rank first.
+        """
         _check_candidate_kinds(scope, transition)
         return (
             self.workflow_adherence * scope.value
@@ -76,7 +84,8 @@ class GuidancePolicy:
         remaining_tools: int = 0,
         stable_order: int = 0,
     ) -> tuple[float, int, int, int]:
-        """Return a deterministic sorting key for one valid candidate.
+        """
+        Return a deterministic sorting key for one valid candidate.
 
         Feasibility and recovery exhaustion must be checked before ranking.
         The small integer fields are deliberately only tie-breakers so the

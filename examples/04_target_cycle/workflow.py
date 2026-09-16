@@ -1,4 +1,6 @@
-"""Define a cycle that can repeatedly produce a target candidate."""
+"""
+Define a cycle that can repeatedly produce a target candidate.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 

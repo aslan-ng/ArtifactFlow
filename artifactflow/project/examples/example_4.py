@@ -1,4 +1,6 @@
-"""Choose the cyclic route in a workflow that also has a linear route."""
+"""
+Choose the cyclic route in a workflow that also has a linear route.
+"""
 
 from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_3 as workflow

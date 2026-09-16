@@ -1,4 +1,6 @@
-"""Accept the third target candidate in a refinement cycle."""
+"""
+Accept the third target candidate in a refinement cycle.
+"""
 
 from artifactflow import Advisor, Project, User
 from artifactflow.workflow.examples import workflow_1 as workflow

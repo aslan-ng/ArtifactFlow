@@ -13,14 +13,18 @@ from artifactflow.network.graphics import Graphics
 
 @dataclass(frozen=True, slots=True)
 class ToolDependencyMatrix:
-    """A tool DSM together with its shared row and column labels."""
+    """
+    A tool DSM together with its shared row and column labels.
+    """
 
     matrix: NDArray[np.int64]
     tool_names: tuple[str, ...]
 
     @property
     def tool_indices(self) -> dict[str, int]:
-        """Return each tool's row and column index in the matrix."""
+        """
+        Return each tool's row and column index in the matrix.
+        """
         return {
             tool_name: index
             for index, tool_name in enumerate(self.tool_names)
@@ -29,7 +33,9 @@ class ToolDependencyMatrix:
 
 @dataclass(frozen=True, slots=True)
 class _ProducerRoute:
-    """One target derivation with route-specific producer selections."""
+    """
+    One target derivation with route-specific producer selections.
+    """
 
     tool_names: frozenset[str]
     boundary_artifacts: tuple[str, ...]
@@ -41,7 +47,9 @@ class _ProducerRoute:
 
     @property
     def key(self) -> tuple[object, ...]:
-        """Return an exact identity for this resolved causal route."""
+        """
+        Return an exact identity for this resolved causal route.
+        """
         return (
             self.tool_names,
             self.boundary_artifacts,
@@ -69,7 +77,9 @@ class Network(
 
     @property
     def artifact_names(self) -> list[str]:
-        """Return artifact names independently of display-graph node keys."""
+        """
+        Return artifact names independently of display-graph node keys.
+        """
         return list(dict.fromkeys(
             artifact.name
             for tool in self.tools
@@ -77,7 +87,9 @@ class Network(
         ))
 
     def contains_tool(self, tool_name: str) -> bool:
-        """Return whether this network contains a named tool."""
+        """
+        Return whether this network contains a named tool.
+        """
         if not isinstance(tool_name, str):
             raise TypeError("tool_name must be a string.")
         return tool_name in self.tool_names
@@ -139,7 +151,8 @@ class Network(
         target_artifacts: Iterable[str],
         validator: Callable[[_ProducerRoute], bool],
     ) -> tuple[_ProducerRoute, ...]:
-        """Discover target routes by choosing producers, not tool supersets.
+        """
+        Discover target routes by choosing producers, not tool supersets.
 
         Each target and each internally supplied tool input chooses one
         producer. This retains a longer refinement route when it selects a
@@ -373,7 +386,8 @@ class Network(
         route: _ProducerRoute,
         boundary_artifacts: Iterable[str],
     ) -> nx.DiGraph:
-        """Return a causal graph containing only the selected route edges.
+        """
+        Return a causal graph containing only the selected route edges.
 
         Intermediate artifact names are intentionally absent. Reusing one
         shared artifact node would let an unchosen producer fabricate a path
@@ -452,7 +466,8 @@ class Network(
         self,
         tool_names: frozenset[str] | set[str] | None = None,
     ) -> nx.DiGraph:
-        """Return a bipartite graph whose typed keys cannot collide.
+        """
+        Return a bipartite graph whose typed keys cannot collide.
 
         ``G`` remains the package's concise public/display graph and uses
         plain names as node keys. Structural analysis uses this private graph

@@ -1,9 +1,13 @@
-"""Define the linear workflow used by this example."""
+"""
+Define the linear workflow used by this example.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 
 
-""" Setup """
+"""
+Setup
+"""
 brief = Artifact("Brief")
 outline = Artifact("Outline")
 final_report = Artifact("Final report")

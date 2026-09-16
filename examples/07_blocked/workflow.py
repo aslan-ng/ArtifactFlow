@@ -1,4 +1,6 @@
-"""Define a workflow whose alternative routes may all fail."""
+"""
+Define a workflow whose alternative routes may all fail.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 

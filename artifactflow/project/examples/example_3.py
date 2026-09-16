@@ -1,4 +1,6 @@
-"""A linear workflow completes as soon as its target is produced."""
+"""
+A linear workflow completes as soon as its target is produced.
+"""
 
 from artifactflow import Advisor, Project
 from artifactflow.workflow.examples import workflow_2 as workflow

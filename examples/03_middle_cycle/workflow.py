@@ -1,4 +1,6 @@
-"""Define a workflow with a revise-review cycle before publication."""
+"""
+Define a workflow with a revise-review cycle before publication.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 

@@ -1,4 +1,6 @@
-"""Define a workflow with primary and backup routes."""
+"""
+Define a workflow with primary and backup routes.
+"""
 
 from artifactflow import Artifact, Tool, Workflow
 

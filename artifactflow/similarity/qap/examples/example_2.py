@@ -8,7 +8,9 @@ from artifactflow.tool.examples import (
 )
 
 
-"""Tool Network 1"""
+"""
+Tool Network 1
+"""
 
 tool_network_1 = ToolNetwork()
 tool_network_1.add_tool(tool_1)
@@ -17,7 +19,9 @@ tool_network_1.add_tool(tool_3)
 tool_network_1.add_tool(tool_4)
 
 
-"""Tool Network 2"""
+"""
+Tool Network 2
+"""
 
 tool_network_2 = ToolNetwork()
 tool_network_2.add_tool(tool_1)
@@ -25,14 +29,18 @@ tool_network_2.add_tool(tool_2)
 tool_network_2.add_tool(tool_3)
 
 
-"""Tool Network 3"""
+"""
+Tool Network 3
+"""
 
 tool_network_3 = ToolNetwork()
 tool_network_3.add_tool(tool_1)
 tool_network_3.add_tool(tool_4)
 
 
-"""Align all networks to the same global node universe"""
+"""
+Align all networks to the same global node universe
+"""
 
 study = QAP(
     networks={

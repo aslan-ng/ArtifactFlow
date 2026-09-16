@@ -20,7 +20,9 @@ def _has_positive_length_path(
     start: Hashable,
     target: Hashable,
 ) -> bool:
-    """Return whether a directed path traverses at least one edge."""
+    """
+    Return whether a directed path traverses at least one edge.
+    """
     if start not in graph or target not in graph:
         return False
     if start != target:
@@ -45,7 +47,8 @@ class ToolNetwork(
         self.exclude_tools: list[str] | None = None
 
     def contains_workflow(self, workflow: Workflow) -> bool:
-        """Return whether this network contains the complete workflow.
+        """
+        Return whether this network contains the complete workflow.
 
         Matching tool names must declare the same input and output artifacts.
         Tool order and the workflow's starting and target boundaries do not
@@ -353,7 +356,8 @@ class ToolNetwork(
         anchor_artifacts: Iterable[str],
         target_artifacts: Iterable[str],
     ) -> list[Plan]:
-        """Return causally distinct plans to fresh targets.
+        """
+        Return causally distinct plans to fresh targets.
 
         ``available_artifacts`` are usable now. ``anchor_artifacts`` identify
         the recent results from which the continuation should proceed. Every
@@ -440,7 +444,9 @@ class ToolNetwork(
         anchor_artifacts: tuple[str, ...],
         target_artifacts: tuple[str, ...],
     ) -> bool:
-        """Return whether a resolved route is a complete continuation."""
+        """
+        Return whether a resolved route is a complete continuation.
+        """
         if {
             target_name
             for target_name, _producer_names in route.target_producers

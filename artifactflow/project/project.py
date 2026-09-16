@@ -1,4 +1,6 @@
-"""The workflow definition and observed execution history of one project."""
+"""
+The workflow definition and observed execution history of one project.
+"""
 
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ ActionLocation = Literal[
 
 @dataclass(frozen=True, slots=True)
 class ProjectState:
-    """Factual history summary, independent of orchestration policy.
+    """
+    Factual history summary, independent of orchestration policy.
 
     ``latest_artifacts`` contains the newest version recorded anywhere in
     the history. During recovery, the Advisor may intentionally use an older
@@ -48,7 +51,8 @@ class ProjectState:
 
 
 class Project:
-    """Combine a workflow, its wider tool network, and an execution log.
+    """
+    Combine a workflow, its wider tool network, and an execution log.
 
     A project starts with an empty :class:`ExecutionLog` unless an existing
     log is injected. When no tool network is supplied, an exact network copy
@@ -108,12 +112,16 @@ class Project:
 
     @property
     def events(self) -> tuple[ProjectEvent, ...]:
-        """Return the complete, ordered execution history."""
+        """
+        Return the complete, ordered execution history.
+        """
         return self.execution_log.events
 
     @property
     def state(self) -> ProjectState:
-        """Reconstruct factual state from the complete execution history."""
+        """
+        Reconstruct factual state from the complete execution history.
+        """
         available_artifacts: set[str] = set()
         produced_artifacts: set[str] = set()
         latest_artifacts: dict[str, ArtifactVersion] = {}
@@ -152,14 +160,17 @@ class Project:
 
     @property
     def available_artifacts(self) -> frozenset[str]:
-        """Return artifact names that have been usable at least once."""
+        """
+        Return artifact names that have been usable at least once.
+        """
         return self.state.available_artifacts
 
     def latest_artifact(
         self,
         artifact_name: str,
     ) -> ArtifactVersion | None:
-        """Return the newest version anywhere in the execution history.
+        """
+        Return the newest version anywhere in the execution history.
 
         This is useful for inspection. Advice uses route-aware versions
         reconstructed from the same log instead of blindly using this value.
@@ -174,7 +185,9 @@ class Project:
         value: object | None = None,
         file: FileReference | None = None,
     ) -> ArtifactVersion:
-        """Record one artifact obtained outside the workflow."""
+        """
+        Record one artifact obtained outside the workflow.
+        """
         self._validate_artifacts({artifact_name})
         return self.execution_log.artifact_available(
             artifact_name,
@@ -189,7 +202,8 @@ class Project:
         inputs: Iterable[ArtifactVersion] | None = None,
         outputs: Iterable[ArtifactOutput] | None = None,
     ) -> ToolSucceeded:
-        """Record one successful tool call and its concrete artifacts.
+        """
+        Record one successful tool call and its concrete artifacts.
 
         An observer should pass the exact input versions and output values or
         files. Omitting them is a convenient shorthand for simulations: the
@@ -212,7 +226,9 @@ class Project:
         *,
         inputs: Iterable[ArtifactVersion] | None = None,
     ) -> ToolFailed:
-        """Record one failed tool attempt and the exact inputs it used."""
+        """
+        Record one failed tool attempt and the exact inputs it used.
+        """
         tool = self.tool(tool_name)
         input_versions = self._resolve_input_versions(tool, inputs)
         return self.execution_log.tool_failed(
@@ -225,11 +241,15 @@ class Project:
         self,
         targets: Iterable[ArtifactVersion] = (),
     ) -> TargetsAccepted:
-        """Record acceptance, optionally naming exact target versions."""
+        """
+        Record acceptance, optionally naming exact target versions.
+        """
         return self.execution_log.targets_accepted(targets)
 
     def tool(self, tool_name: str) -> Tool:
-        """Return a known tool from the project's complete tool network."""
+        """
+        Return a known tool from the project's complete tool network.
+        """
         for tool in self.tool_network.tools:
             if tool.name == tool_name:
                 return tool
@@ -240,7 +260,8 @@ class Project:
         tool_name: str,
         proposed_plans: Iterable[Plan] = (),
     ) -> ActionLocation:
-        """Locate an observed tool within the project's planning scopes.
+        """
+        Locate an observed tool within the project's planning scopes.
 
         Classification is purely structural. The Advisor will later decide
         how to respond to an action outside its proposed plans.
@@ -264,7 +285,9 @@ class Project:
         self,
         artifact_names: Iterable[str],
     ) -> tuple[str, ...]:
-        """Order artifact names as they occur in the workflow graph."""
+        """
+        Order artifact names as they occur in the workflow graph.
+        """
         names = set(artifact_names)
         return tuple(
             artifact_name

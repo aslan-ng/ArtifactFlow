@@ -1,4 +1,6 @@
-"""Compare two guidance policies after the same observed deviation."""
+"""
+Compare two guidance policies after the same observed deviation.
+"""
 
 from artifactflow import (
     Advisor,

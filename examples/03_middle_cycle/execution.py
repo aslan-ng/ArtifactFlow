@@ -1,4 +1,5 @@
-"""Repeat a middle cycle until the third review, then publish.
+"""
+Repeat a middle cycle until the third review, then publish.
 
 The three-review rule is only a deterministic simulation. A real LLM or
 human could decide whether to revise or publish by reading the review.
