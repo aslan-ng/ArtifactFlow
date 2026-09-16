@@ -1,24 +1,41 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "artifactflow"
-version = "0.1.0"
+version = "0.1.1"
 description = "Artifact-aware workflow synthesis and orchestration by matching tool inputs, outputs, and dependencies."
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "matplotlib",
     "networkx",
     "numpy",
 ]
+requires-python = ">=3.10"
 keywords = [
     "artifacts",
     "orchestration",
     "workflow",
     "workflow-synthesis",
 ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+readme = "README.md"
+authors = [
+    { name = "Aslan Noorghasemi" },
+    { name = "Christopher McComb" },
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["artifactflow*"]
+
+[project.urls]
+Repository = "https://github.com/aslan-ng/ArtifactFlow"
+Issues = "https://github.com/aslan-ng/ArtifactFlow/issues"
