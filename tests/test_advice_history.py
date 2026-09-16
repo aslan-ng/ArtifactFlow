@@ -44,6 +44,11 @@ class TestAdviceSnapshot(unittest.TestCase):
             ),
         )
         self.assertEqual(snapshot.plans_for("unknown"), ())
+        self.assertEqual(
+            snapshot.route_keys_for("Prepare"),
+            (shared.route_key, longer.route_key),
+        )
+        self.assertEqual(snapshot.route_keys_for("unknown"), ())
         with self.assertRaises(FrozenInstanceError):
             snapshot.event_position = 1  # type: ignore[misc]
 
@@ -168,30 +173,30 @@ class TestAdviceHistory(unittest.TestCase):
 
     def test_reused_snapshot_becomes_the_most_recent_issuance(self):
         history = AdviceHistory()
-        normative = history.record(
+        workflow_adherent = history.record(
             event_position=2,
-            configuration="normative",
+            configuration="workflow_adherent",
             visible_root_tools=["Restore"],
         )
-        homophilic = history.record(
+        opportunistic = history.record(
             event_position=2,
-            configuration="homophilic",
+            configuration="opportunistic",
             visible_root_tools=["Continue"],
         )
 
-        repeated_normative = history.record(
+        repeated_workflow_adherent = history.record(
             event_position=2,
-            configuration="normative",
+            configuration="workflow_adherent",
             visible_root_tools=["Restore"],
         )
 
-        self.assertIs(repeated_normative, normative)
-        self.assertIsNot(normative, homophilic)
+        self.assertIs(repeated_workflow_adherent, workflow_adherent)
+        self.assertIsNot(workflow_adherent, opportunistic)
         self.assertEqual(len(history), 2)
-        self.assertEqual(history.snapshots, (normative, homophilic))
-        self.assertIs(history.latest(), normative)
-        self.assertIs(history.latest_before(3), normative)
-        self.assertIs(history.latest("homophilic"), homophilic)
+        self.assertEqual(history.snapshots, (workflow_adherent, opportunistic))
+        self.assertIs(history.latest(), workflow_adherent)
+        self.assertIs(history.latest_before(3), workflow_adherent)
+        self.assertIs(history.latest("opportunistic"), opportunistic)
 
     def test_none_can_be_used_as_an_explicit_configuration(self):
         history = AdviceHistory()
@@ -279,31 +284,31 @@ class TestAdviceHistory(unittest.TestCase):
         history = AdviceHistory()
         first = history.record(
             event_position=0,
-            configuration="normative",
+            configuration="workflow_adherent",
             visible_root_tools=["A"],
         )
         history.record(
             event_position=1,
-            configuration="homophilic",
+            configuration="opportunistic",
             visible_root_tools=["X"],
         )
         second = history.record(
             event_position=2,
-            configuration="normative",
+            configuration="workflow_adherent",
             visible_root_tools=["B"],
         )
 
         self.assertIsNone(history.latest_before(0))
         self.assertIs(history.latest_before(1), first)
         self.assertIs(
-            history.latest_before(2, "normative"),
+            history.latest_before(2, "workflow_adherent"),
             first,
         )
         self.assertIs(
-            history.latest_before(3, "normative"),
+            history.latest_before(3, "workflow_adherent"),
             second,
         )
-        self.assertIs(history.latest("normative"), second)
+        self.assertIs(history.latest("workflow_adherent"), second)
 
     def test_rejects_invalid_positions_and_unhashable_configuration(self):
         history = AdviceHistory()

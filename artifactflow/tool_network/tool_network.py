@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Iterable
 from itertools import combinations
+from typing import TYPE_CHECKING
 import networkx as nx
 from copy import deepcopy
 
@@ -9,6 +10,9 @@ from artifactflow.plan.plan import Plan
 from artifactflow.similarity.qap import QAPStudy
 from artifactflow.network.network import Network
 from artifactflow.workflow.workflow import Workflow
+
+if TYPE_CHECKING:
+    from artifactflow.network.network import _ProducerRoute
 
 
 def _has_positive_length_path(
@@ -349,7 +353,7 @@ class ToolNetwork(
         anchor_artifacts: Iterable[str],
         target_artifacts: Iterable[str],
     ) -> list[Plan]:
-        """Return minimal plans from an observed state to fresh targets.
+        """Return causally distinct plans to fresh targets.
 
         ``available_artifacts`` are usable now. ``anchor_artifacts`` identify
         the recent results from which the continuation should proceed. Every
@@ -392,106 +396,68 @@ class ToolNetwork(
                 f"{sorted(unavailable_anchors)}"
             )
 
-        tool_graph = self.to_tool_dependency_graph()
-        tool_positions = {
-            tool.name: position
-            for position, tool in enumerate(self.tools)
-        }
-        tool_units = [
-            frozenset(component)
-            for component in nx.strongly_connected_components(tool_graph)
-        ]
-        tool_units.sort(
-            key=lambda unit: min(tool_positions[name] for name in unit)
-        )
-
-        valid_tool_sets: list[frozenset[str]] = []
-        for unit_count in range(1, len(tool_units) + 1):
-            for selected_units in combinations(tool_units, unit_count):
-                selected_tools = frozenset().union(*selected_units)
-                if self._is_valid_continuation_plan(
-                    selected_tools,
+        routes = self._discover_producer_routes(
+            boundary_artifacts=available,
+            target_artifacts=targets,
+            validator=lambda route: (
+                self._is_valid_continuation_plan(
+                    route,
                     frozenset(available),
                     anchors,
                     targets,
-                ):
-                    valid_tool_sets.append(selected_tools)
-
-        minimal_tool_sets = [
-            selected_tools
-            for selected_tools in valid_tool_sets
-            if not any(
-                other_tools < selected_tools
-                for other_tools in valid_tool_sets
-            )
-        ]
-        minimal_tool_sets.sort(
-            key=lambda names: tuple(
-                position
-                for position, tool in enumerate(self.tools)
-                if tool.name in names
-            )
+                )
+            ),
         )
 
         plans: list[Plan] = []
-        for selected_tools in minimal_tool_sets:
+        for route in routes:
             plan = Plan()
             for tool in self.tools:
-                if tool.name in selected_tools:
+                if tool.name in route.tool_names:
                     plan.add_tool(tool)
-            plan.starting_artifacts = [
-                artifact_name
-                for artifact_name in anchors
-                if artifact_name in plan.artifact_names
-            ]
+            # Keep every available boundary artifact this exact route chose,
+            # not only its anchor. A non-anchor may be the concrete seed that
+            # determines which tool can enter a selected cycle first.
+            plan.starting_artifacts = list(route.boundary_artifacts)
             plan.target_artifacts = list(targets)
+            plan.set_input_producers({
+                (tool_name, artifact_name): producer_names
+                for tool_name, artifact_name, producer_names
+                in route.input_producers
+            })
+            plan.set_target_producers({
+                target_name: producer_names
+                for target_name, producer_names
+                in route.target_producers
+            })
             plans.append(plan)
         return plans
 
     def _is_valid_continuation_plan(
         self,
-        selected_tools: frozenset[str],
+        route: _ProducerRoute,
         available_artifacts: frozenset[str],
         anchor_artifacts: tuple[str, ...],
         target_artifacts: tuple[str, ...],
     ) -> bool:
-        """Return whether a tool subset is one complete continuation."""
-        selected = [
-            tool
-            for tool in self.tools
-            if tool.name in selected_tools
-        ]
-        produced_artifacts = {
-            artifact.name
-            for tool in selected
-            for artifact in tool.outputs
-        }
-        if not set(target_artifacts) <= produced_artifacts:
+        """Return whether a resolved route is a complete continuation."""
+        if {
+            target_name
+            for target_name, _producer_names in route.target_producers
+        } != set(target_artifacts):
             return False
 
-        for tool in selected:
-            for artifact in tool.inputs:
-                if artifact.name in available_artifacts:
-                    continue
-                producers = {
-                    candidate.name
-                    for candidate in self.tools
-                    if any(
-                        output.name == artifact.name
-                        for output in candidate.outputs
-                    )
-                }
-                if producers and not producers & selected_tools:
-                    return False
-
-        plan_graph = self._typed_dependency_graph(selected_tools)
+        plan_graph = self._producer_route_graph(
+            route,
+            available_artifacts,
+        )
 
         if any(
             not any(
                 _has_positive_length_path(
                     plan_graph,
-                    ("artifact", anchor),
-                    ("artifact", target),
+                    ("boundary", anchor),
+                    ("target", target),
                 )
                 for anchor in anchor_artifacts
             )
@@ -503,12 +469,12 @@ class ToolNetwork(
             any(
                 nx.has_path(
                     plan_graph,
-                    ("tool", tool.name),
-                    ("artifact", target),
+                    ("tool", tool_name),
+                    ("target", target),
                 )
                 for target in target_artifacts
             )
-            for tool in selected
+            for tool_name in route.tool_names
         )
 
     @staticmethod

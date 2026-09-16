@@ -1,4 +1,4 @@
-"""Define a preferred workflow inside a wider tool network."""
+"""Define the preferred workflow and wider network for the policy example."""
 
 from artifactflow import Artifact, Tool, Workflow
 

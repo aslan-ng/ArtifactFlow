@@ -62,9 +62,10 @@ if snapshot is not None:
 ```
 
 An immutable advice snapshot stores the number of project events already seen,
-the Advisor configuration, the visible root tools, and compact signatures of
-the Plans supporting each tool. Repeating `advise()` at the same project state
-and configuration reuses the same snapshot instead of creating a duplicate.
+the Advisor configuration, the visible root tools, compact public Plan
+signatures, and exact producer-resolved route keys. Repeating `advise()` at the
+same project state and configuration reuses the same snapshot instead of
+creating a duplicate.
 This lets the Advisor recognize a later action as following or deviating from
 what was actually visible, including when `max_options` hid other valid routes.
 Keep that history for the lifetime of one Project run. If an integration
@@ -86,8 +87,13 @@ affects how its earlier observations are replayed. Do not share one
 ## How Plans become options
 
 A Workflow may contain several target-reaching Plans, and a Plan may contain a
-cycle. Plans that have the same executable next tool are shown as one root
-option. Their identities remain available in `option.supporting_plans` and in
+cycle. Plans are producer-resolved subnetworks, not user-declared tool-call
+sequences: ordering comes from the selected artifact dependencies. A direct
+producer and a meaningful refinement producer therefore remain separate Plans
+even when the refinement Plan contains every tool in the direct one. Plans
+that have the same executable next tool and concrete input versions are shown
+as one root option. Compact identities remain in `option.supporting_plans`;
+exact producer provenance is retained in `option.supporting_route_keys` and in
 the advice snapshot.
 
 For example, if two Plans begin with `Prepare`, the first advice shows
@@ -95,6 +101,9 @@ For example, if two Plans begin with `Prepare`, the first advice shows
 tool uniquely selects Plan A, later advice contains only the remainder of Plan
 A. Plan B is parked as an earlier alternative and can return if Plan A is
 exhausted; it is not repeatedly offered while Plan A is progressing normally.
+The match uses each Plan's current frontier, not mere membership: a tool that
+occurs later in Plan B does not make an earlier execution count as following
+Plan B.
 
 ## Artifact versions
 
@@ -133,8 +142,9 @@ which is not necessarily the newest version anywhere in the factual history.
    point.
 7. `07_blocked/` — limit the Advisor to one visible option, exhaust every
    route, and receive `BLOCKED`.
-8. `08_deviation_character/` — deviate into the wider ToolNetwork and compare
-   how normative and homophilic Advisors order the same valid continuations.
+8. `08_deviation_policy/` — deviate into the wider ToolNetwork and compare
+   how workflow-adherent and opportunistic policies order the same valid
+   continuations.
 
 Each example separates two concerns:
 
@@ -171,13 +181,17 @@ succeed.
 `max_options` limits the number of alternatives shown at every visible
 decision. `None`, the default, shows all alternatives. If the limit is five
 and only three options exist, all three are returned. Asking again without a
-report is not pagination: it returns the same options.
+report is not pagination: it returns the same options. The cap is applied
+independently to each root or nested sibling list, not to the total number of
+nodes in the preview tree.
 
-Equivalent Plan roots are grouped, valid candidates are ranked by the Advisor's
-character, and only then is `max_options` applied. Stable network order resolves
-remaining ties. With a very small limit, a valid option can therefore remain
-hidden—for example, a cycle exit ordered after its repeat option. Use `None`
-when every choice must remain visible.
+Equivalent Plan roots are grouped, valid candidates are ranked by the guidance
+policy, and only then is `max_options` applied. Stable network order resolves
+remaining ties. The exception is an active optimization-cycle gate: repeat and
+exit are treated as one atomic decision, so both remain visible even when
+`max_options=1`. If the exit still needs an executable prerequisite, that
+option is marked `EXIT_PREPARATION` and is protected with the repeat. Outside
+that narrow exception, use `None` when every valid choice must remain visible.
 
 The Advisor marks omitted information explicitly:
 
@@ -209,6 +223,10 @@ Each `ToolOption` reports:
 - `transition`: `CONTINUE_CURRENT`, `REJOIN`, or `RESTORE_CHECKPOINT`.
 - `supporting_plans`: compact tool-name signatures for the Plans represented
   by this option.
+- `supporting_route_keys`: exact producer bindings for those Plans; history
+  uses these to distinguish routes with the same tool names.
+- `cycle_action`: `REPEAT`, `EXIT`, or `EXIT_PREPARATION` at an active cycle
+  gate, and `None` elsewhere.
 
 A missing artifact on a root option must be obtained before calling that tool.
 A missing artifact on a nested continuation may be needed later, but only if
@@ -266,42 +284,48 @@ candidate, `command.target_acceptance_required` is true. The observer may then
 record `project.record_target_acceptance()` before asking again, or the caller
 may choose a root continuation to create a new candidate.
 
+At a middle-cycle decision, another optimization pass is ranked first, but its
+exit remains visible and selectable. Choosing repeat stays on the active Plan;
+choosing exit parks the repeat while downstream work succeeds. Retry still has
+higher priority after a failed exit, and normal failure/backtracking can revive
+the parked cycle choice.
+
 This lightweight API intentionally avoids opaque option IDs. Tool definitions
 have unique names, but the same tool can appear more than once when different
 checkpoints would use different artifact versions. In that case,
 `input_artifacts` distinguishes the commands. Execution is sequential, and
 observations must arrive once and in order.
 
-## Advisor character
+## Guidance policy
 
-Character changes the order of valid options; it does not change feasibility,
+Policy changes the order of valid options; it does not change feasibility,
 retry limits, or exhausted routes. Three presets cover the common cases:
 
 ```python
-from artifactflow import BALANCED, HOMOPHILIC, NORMATIVE
+from artifactflow import BALANCED, OPPORTUNISTIC, WORKFLOW_ADHERENT
 
-normative = Advisor(project, character=NORMATIVE)
-balanced = Advisor(project, character=BALANCED)
-homophilic = Advisor(project, character=HOMOPHILIC)
+workflow_adherent = Advisor(project, policy=WORKFLOW_ADHERENT)
+balanced = Advisor(project, policy=BALANCED)
+opportunistic = Advisor(project, policy=OPPORTUNISTIC)
 ```
 
-- `NORMATIVE` prefers proposed Plans, then other Workflow Plans, then the wider
-  ToolNetwork.
-- `HOMOPHILIC` prefers continuing from the LLM's observed direction, then
-  rejoining, then restoring an earlier checkpoint.
+- `WORKFLOW_ADHERENT` prefers proposed Plans, then other Workflow Plans, then
+  the wider ToolNetwork.
+- `OPPORTUNISTIC` prefers valid target-reaching continuations from the LLM's
+  observed direction, then rejoining, then restoring an earlier checkpoint.
 - `BALANCED` gives equal importance to those preferences.
 
 A continuous blend is also available:
 
 ```python
-from artifactflow import AdvisorCharacter
+from artifactflow import GuidancePolicy
 
-character = AdvisorCharacter(normativity=0.7)
-advisor = Advisor(project, character=character)
+policy = GuidancePolicy(workflow_adherence=0.7)
+advisor = Advisor(project, policy=policy)
 ```
 
-`normativity` ranges from `0.0` to `1.0`; homophily is automatically
-`1 - normativity`. A value of `0.5` balances both costs at every decision. It
-does not randomly choose normative behavior half the time. When character
-costs tie, fewer missing artifacts, fewer remaining tools, and stable network
-order provide deterministic tie-breakers.
+`workflow_adherence` ranges from `0.0` to `1.0`; the execution-continuity
+weight is automatically `1 - workflow_adherence`. A value of `0.5` balances
+both costs at every decision. It does not randomly choose one endpoint half
+the time. When policy costs tie, fewer missing artifacts, fewer remaining
+tools, and stable network order provide deterministic tie-breakers.

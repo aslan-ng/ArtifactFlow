@@ -1,69 +1,71 @@
 import unittest
 
 from artifactflow.advisor import (
-    AdvisorCharacter,
     BALANCED,
     CandidateScope,
     CandidateTransition,
-    HOMOPHILIC,
-    NORMATIVE,
+    GuidancePolicy,
+    OPPORTUNISTIC,
+    WORKFLOW_ADHERENT,
 )
 
 
-class TestAdvisorCharacter(unittest.TestCase):
-    def test_homophily_is_complement_of_normativity(self):
-        character = AdvisorCharacter(normativity=0.25)
+class TestGuidancePolicy(unittest.TestCase):
+    def test_continuity_weight_complements_workflow_adherence(self):
+        policy = GuidancePolicy(workflow_adherence=0.25)
 
-        self.assertEqual(character.normativity, 0.25)
-        self.assertEqual(character.homophily, 0.75)
+        self.assertEqual(policy.workflow_adherence, 0.25)
+        self.assertEqual(policy.continuity_weight, 0.75)
 
-    def test_character_is_immutable(self):
-        character = AdvisorCharacter()
+    def test_policy_is_immutable(self):
+        policy = GuidancePolicy()
 
         with self.assertRaises(AttributeError):
-            character.normativity = 0.5  # type: ignore[misc]
+            policy.workflow_adherence = 0.5  # type: ignore[misc]
 
-    def test_normativity_must_be_finite_and_between_zero_and_one(self):
+    def test_workflow_adherence_must_be_finite_and_in_range(self):
         for invalid in (-0.01, 1.01, float("nan"), float("inf")):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
-                    AdvisorCharacter(normativity=invalid)
+                    GuidancePolicy(workflow_adherence=invalid)
 
         for invalid in (True, "0.5", None):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(TypeError):
-                    AdvisorCharacter(normativity=invalid)  # type: ignore[arg-type]
+                    GuidancePolicy(  # type: ignore[arg-type]
+                        workflow_adherence=invalid
+                    )
 
-    def test_presets_cover_the_character_range(self):
-        self.assertEqual(NORMATIVE.normativity, 1.0)
-        self.assertEqual(BALANCED.normativity, 0.5)
-        self.assertEqual(HOMOPHILIC.normativity, 0.0)
+    def test_presets_cover_the_policy_range(self):
+        self.assertEqual(WORKFLOW_ADHERENT.workflow_adherence, 1.0)
+        self.assertEqual(BALANCED.workflow_adherence, 0.5)
+        self.assertEqual(OPPORTUNISTIC.workflow_adherence, 0.0)
 
-    def test_normative_character_prefers_the_proposed_plan(self):
-        restore_proposal = NORMATIVE.cost(
+    def test_workflow_adherent_policy_prefers_the_proposed_plan(self):
+        restore_proposal = WORKFLOW_ADHERENT.cost(
             CandidateScope.PROPOSED_PLAN,
             CandidateTransition.RESTORE_CHECKPOINT,
         )
-        continue_deviation = NORMATIVE.cost(
+        continue_deviation = WORKFLOW_ADHERENT.cost(
             CandidateScope.TOOL_NETWORK,
             CandidateTransition.CONTINUE_CURRENT,
         )
 
         self.assertLess(restore_proposal, continue_deviation)
 
-    def test_homophilic_character_prefers_continuing_current_direction(self):
-        restore_proposal = HOMOPHILIC.cost(
+    def test_opportunistic_policy_prefers_current_direction(self):
+        restore_proposal = OPPORTUNISTIC.cost(
             CandidateScope.PROPOSED_PLAN,
             CandidateTransition.RESTORE_CHECKPOINT,
         )
-        continue_deviation = HOMOPHILIC.cost(
+        continue_deviation = OPPORTUNISTIC.cost(
             CandidateScope.TOOL_NETWORK,
             CandidateTransition.CONTINUE_CURRENT,
         )
 
         self.assertGreater(restore_proposal, continue_deviation)
 
-    def test_balanced_character_gives_both_dimensions_equal_weight(self):
+    def test_balanced_policy_gives_both_dimensions_equal_weight(self):
         restore_proposal = BALANCED.cost(
             CandidateScope.PROPOSED_PLAN,
             CandidateTransition.RESTORE_CHECKPOINT,
@@ -76,10 +78,10 @@ class TestAdvisorCharacter(unittest.TestCase):
         self.assertEqual(restore_proposal, continue_deviation)
 
     def test_rank_uses_simple_deterministic_tie_breakers(self):
-        character = AdvisorCharacter(normativity=0.5)
+        policy = GuidancePolicy(workflow_adherence=0.5)
 
         def rank(**tie_breakers: int) -> tuple[float, int, int, int]:
-            return character.rank(
+            return policy.rank(
                 CandidateScope.WORKFLOW_PLAN,
                 CandidateTransition.REJOIN,
                 **tie_breakers,
@@ -97,31 +99,31 @@ class TestAdvisorCharacter(unittest.TestCase):
         self.assertLess(earlier, later)
 
     def test_rank_rejects_invalid_tie_breakers(self):
-        character = AdvisorCharacter()
+        policy = GuidancePolicy()
 
         with self.assertRaises(TypeError):
-            character.rank(
+            policy.rank(
                 CandidateScope.PROPOSED_PLAN,
                 CandidateTransition.CONTINUE_CURRENT,
                 missing_artifacts=True,
             )
         with self.assertRaises(ValueError):
-            character.rank(
+            policy.rank(
                 CandidateScope.PROPOSED_PLAN,
                 CandidateTransition.CONTINUE_CURRENT,
                 remaining_tools=-1,
             )
 
     def test_cost_requires_explicit_candidate_categories(self):
-        character = AdvisorCharacter()
+        policy = GuidancePolicy()
 
         with self.assertRaises(TypeError):
-            character.cost(
+            policy.cost(
                 0,  # type: ignore[arg-type]
                 CandidateTransition.CONTINUE_CURRENT,
             )
         with self.assertRaises(TypeError):
-            character.cost(CandidateScope.PROPOSED_PLAN, 0)  # type: ignore[arg-type]
+            policy.cost(CandidateScope.PROPOSED_PLAN, 0)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

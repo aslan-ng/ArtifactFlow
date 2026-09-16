@@ -67,6 +67,51 @@ class TestContinuationPlanDiscovery(unittest.TestCase):
             ],
         )
 
+    def test_retains_a_longer_route_with_a_distinct_selected_producer(self):
+        anchor = Artifact("anchor")
+        draft = Artifact("draft")
+        publishable = Artifact("publishable")
+        target = Artifact("target")
+        network = make_network(
+            Tool(
+                "Draft",
+                inputs=[anchor],
+                outputs=[draft, publishable],
+            ),
+            Tool("Publish", inputs=[publishable], outputs=[target]),
+            Tool("Refine", inputs=[draft], outputs=[publishable]),
+        )
+
+        plans = network.discover_continuation_plans(
+            available_artifacts=["anchor"],
+            anchor_artifacts=["anchor"],
+            target_artifacts=["target"],
+        )
+
+        self.assertEqual(
+            tool_sets(plans),
+            {
+                ("Draft", "Publish"),
+                ("Draft", "Publish", "Refine"),
+            },
+        )
+        by_tools = {
+            tuple(plan.tool_names): plan
+            for plan in plans
+        }
+        self.assertEqual(
+            by_tools[("Draft", "Publish")].producers_for_input(
+                "Publish",
+                "publishable",
+            ),
+            ("Draft",),
+        )
+        self.assertEqual(
+            by_tools[("Draft", "Publish", "Refine")]
+            .producers_for_input("Publish", "publishable"),
+            ("Refine",),
+        )
+
     def test_available_join_input_does_not_require_its_network_producer(
         self,
     ):
@@ -166,6 +211,40 @@ class TestContinuationPlanDiscovery(unittest.TestCase):
         self.assertEqual(
             tool_sets(plans),
             {("Enter", "Review", "Revise", "Publish")},
+        )
+
+    def test_available_non_anchor_preserves_the_selected_cycle_seed(self):
+        anchor = Artifact("anchor")
+        x = Artifact("x")
+        y = Artifact("y")
+        target = Artifact("target")
+        network = make_network(
+            # Deliberately put B first: insertion order must not replace the
+            # available x seed with a missing y bootstrap.
+            Tool("B", inputs=[y], outputs=[x]),
+            Tool("A", inputs=[x], outputs=[y]),
+            Tool("Exit", inputs=[y, anchor], outputs=[target]),
+        )
+
+        plans = network.discover_continuation_plans(
+            available_artifacts=["anchor", "x"],
+            anchor_artifacts=["anchor"],
+            target_artifacts=["target"],
+        )
+        seeded = next(
+            plan
+            for plan in plans
+            if "x" in plan.starting_artifacts
+        )
+
+        self.assertEqual(seeded.starting_artifacts, ["anchor", "x"])
+        self.assertEqual(
+            seeded.input_requirements().bootstrap_artifacts,
+            {"x"},
+        )
+        self.assertTrue(
+            seeded.missing_input_requirements({"anchor", "x"})
+            .is_satisfied
         )
 
     def test_irrelevant_available_artifact_does_not_constrain_the_plan(self):

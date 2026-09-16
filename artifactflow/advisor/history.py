@@ -6,7 +6,7 @@ from collections.abc import Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from artifactflow.plan.plan import Plan
+from artifactflow.plan.plan import Plan, PlanRouteKey
 
 
 PlanSignature: TypeAlias = tuple[str, ...]
@@ -25,16 +25,23 @@ class AdvisedOption:
     tool_name: str
     input_artifacts: tuple[ArtifactBinding, ...] = ()
     supporting_plan_signatures: tuple[PlanSignature, ...] = ()
+    supporting_route_keys: tuple[PlanRouteKey, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.tool_name, str):
             raise TypeError("tool_name must be a string.")
         _validate_artifact_bindings(self.input_artifacts)
         _validate_plan_signatures(self.supporting_plan_signatures)
+        _validate_route_keys(self.supporting_route_keys)
         object.__setattr__(
             self,
             "supporting_plan_signatures",
             _unique_signatures(self.supporting_plan_signatures),
+        )
+        object.__setattr__(
+            self,
+            "supporting_route_keys",
+            tuple(dict.fromkeys(self.supporting_route_keys)),
         )
 
 
@@ -43,8 +50,9 @@ class AdviceSnapshot:
     """Advice issued after a particular number of project events.
 
     ``event_position`` is the number of execution events already observed
-    when the advice was issued. Plan objects are represented by their ordered
-    tool names so that a snapshot stays small and immutable.
+    when the advice was issued. Public Plan metadata uses ordered tool-name
+    signatures; exact producer-resolved keys are retained for deterministic
+    replay when two routes have the same tools.
     """
 
     event_position: int
@@ -128,7 +136,13 @@ class AdviceSnapshot:
                 f"options: {sorted(unknown_tools)}"
             )
 
-        signatures: list[tuple[str, tuple[PlanSignature, ...]]] = []
+        signatures: list[
+            tuple[
+                str,
+                tuple[PlanSignature, ...],
+                tuple[PlanRouteKey, ...],
+            ]
+        ] = []
         for tool_name in root_tools:
             plans = tuple(plans_by_tool.get(tool_name, ()))
             if not all(isinstance(plan, Plan) for plan in plans):
@@ -138,7 +152,14 @@ class AdviceSnapshot:
             plan_signatures = _unique_signatures(
                 tuple(tuple(plan.tool_names) for plan in plans)
             )
-            signatures.append((tool_name, plan_signatures))
+            signatures.append((
+                tool_name,
+                plan_signatures,
+                tuple(dict.fromkeys(
+                    plan.route_key
+                    for plan in plans
+                )),
+            ))
 
         return cls(
             event_position=event_position,
@@ -147,8 +168,9 @@ class AdviceSnapshot:
                 AdvisedOption(
                     tool_name=tool_name,
                     supporting_plan_signatures=plan_signatures,
+                    supporting_route_keys=route_keys,
                 )
-                for tool_name, plan_signatures in signatures
+                for tool_name, plan_signatures, route_keys in signatures
             ),
         )
 
@@ -177,6 +199,27 @@ class AdviceSnapshot:
             for signature in option.supporting_plan_signatures
         )
         return tuple(dict.fromkeys(signatures))
+
+    def route_keys_for(
+        self,
+        tool_name: str,
+        input_artifacts: tuple[ArtifactBinding, ...] | None = None,
+    ) -> tuple[PlanRouteKey, ...]:
+        """Return exact producer-resolved route keys for one tool state."""
+        if not isinstance(tool_name, str):
+            raise TypeError("tool_name must be a string.")
+        if input_artifacts is not None:
+            _validate_artifact_bindings(input_artifacts)
+        return tuple(dict.fromkeys(
+            route_key
+            for option in self.options
+            if option.tool_name == tool_name
+            and (
+                input_artifacts is None
+                or option.input_artifacts == input_artifacts
+            )
+            for route_key in option.supporting_route_keys
+        ))
 
     def option_for(
         self,
@@ -385,6 +428,52 @@ def _validate_plan_signatures(
             isinstance(name, str) for name in signature
         ):
             raise TypeError("A Plan signature must be a tuple of tool names.")
+
+
+def _validate_route_keys(keys: tuple[PlanRouteKey, ...]) -> None:
+    if not isinstance(keys, tuple):
+        raise TypeError("supporting_route_keys must be a tuple.")
+    for key in keys:
+        if not isinstance(key, tuple) or len(key) != 5:
+            raise TypeError("A Plan route key must be a five-part tuple.")
+        (
+            tool_names,
+            starting_artifacts,
+            target_artifacts,
+            input_producers,
+            target_producers,
+        ) = key
+        if not isinstance(tool_names, tuple) or not all(
+            isinstance(name, str) for name in tool_names
+        ):
+            raise TypeError("A Plan route key has invalid tool names.")
+        if not isinstance(starting_artifacts, tuple) or not all(
+            isinstance(name, str) for name in starting_artifacts
+        ):
+            raise TypeError("A Plan route key has invalid start artifacts.")
+        if not isinstance(target_artifacts, tuple) or not all(
+            isinstance(name, str) for name in target_artifacts
+        ):
+            raise TypeError("A Plan route key has invalid target artifacts.")
+        if not isinstance(input_producers, tuple) or not all(
+            isinstance(binding, tuple)
+            and len(binding) == 3
+            and isinstance(binding[0], str)
+            and isinstance(binding[1], str)
+            and isinstance(binding[2], tuple)
+            and all(isinstance(name, str) for name in binding[2])
+            for binding in input_producers
+        ):
+            raise TypeError("A Plan route key has invalid input bindings.")
+        if not isinstance(target_producers, tuple) or not all(
+            isinstance(binding, tuple)
+            and len(binding) == 2
+            and isinstance(binding[0], str)
+            and isinstance(binding[1], tuple)
+            and all(isinstance(name, str) for name in binding[1])
+            for binding in target_producers
+        ):
+            raise TypeError("A Plan route key has invalid target bindings.")
 
 
 __all__ = [

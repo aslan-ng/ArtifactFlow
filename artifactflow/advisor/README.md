@@ -44,9 +44,11 @@ for option in command.options:
     print(option.tool_name)
 ```
 
-Every item directly inside `command.options` is executable now. Multiple root
-options are alternatives: choose one of them. Options nested inside
-`option.continuations` are previews, not commands to execute yet.
+Every item directly inside `command.options` is executable now. Choose one as
+the next action. Multiple roots may be mutually exclusive route choices, or
+they may be order-flexible prerequisites that are all needed by one Plan; in
+the latter case, choosing one leaves the others available afterward. Options
+nested inside `option.continuations` are previews, not commands to execute yet.
 
 For example, a lookahead response may conceptually look like this:
 
@@ -98,6 +100,8 @@ eventually followed.
 | `scope` | Whether the option belongs to proposed Plans, another Workflow Plan, or only the wider ToolNetwork. |
 | `transition` | Whether the option continues, rejoins, or restores a previous checkpoint. |
 | `supporting_plans` | Compact tool-name signatures for the Plans represented by this option. Mostly useful for inspection and research. |
+| `cycle_action` | `REPEAT`, `EXIT`, or `EXIT_PREPARATION` at an active optimization-cycle gate; otherwise `None`. |
+| `supporting_route_keys` | Exact producer-resolved route identities used internally and by advice replay. Unlike `supporting_plans`, these distinguish routes with the same tool names. |
 
 ### Actions
 
@@ -110,6 +114,21 @@ eventually followed.
 `Advisor(max_retries=N)` allows up to `N` retries after the initial attempt for
 each option at one decision visit. The default is `1`. A later visit through a
 cycle receives a fresh allowance.
+
+### Cycle actions
+
+`cycle_action` is present only when the current choices form an entered
+optimization-cycle gate:
+
+| Cycle action | Meaning |
+| --- | --- |
+| `REPEAT` | Begin another optimization pass. This is ranked first during normal progress. |
+| `EXIT` | Leave the cycle through an executable downstream tool. |
+| `EXIT_PREPARATION` | Run an independent prerequisite needed to make the exit executable; the repeat remains available afterward. |
+
+The repeat and one exit-side option are protected as an atomic pair from the
+ordinary breadth cap. `action` still governs execution and recovery: for
+example, a failed `EXIT` may simultaneously be `action="RETRY"`.
 
 ### Expected outcomes
 
@@ -144,32 +163,52 @@ Transition describes an option relative to the LLM's observed direction:
 | `REJOIN` | Move from the current direction back into a known Plan. |
 | `RESTORE_CHECKPOINT` | Return to an earlier decision and use its artifact state. |
 
-The Advisor's character changes the ordering of valid options. A normative
-Advisor favors proposed Plans; a homophilic Advisor favors continuing the
-LLM's observed direction. Character changes ordering, not validity.
+The guidance policy changes the ordering of valid options. A
+workflow-adherent policy favors proposed Plans; an opportunistic policy favors
+valid target-reaching continuations from the LLM's observed direction. Policy
+changes ordering, not validity.
 
-### Continuous character
+### Continuous guidance policy
 
-Character is continuous rather than limited to three presets. Configure it
-with an `AdvisorCharacter` whose `normativity` is between `0.0` and `1.0`:
+The policy is continuous rather than limited to three presets. Configure it
+with a `GuidancePolicy` whose `workflow_adherence` is between `0.0` and `1.0`:
 
 ```python
-from artifactflow import Advisor, AdvisorCharacter
+from artifactflow import Advisor, GuidancePolicy
 
 advisor = Advisor(
     project,
-    character=AdvisorCharacter(normativity=0.8),
+    policy=GuidancePolicy(workflow_adherence=0.8),
 )
 ```
 
-`normativity=1.0` ranks entirely by adherence to the proposed Plan, while
-`normativity=0.0` ranks entirely by continuity with the LLM's observed
-direction. Intermediate values blend those costs; for example, `0.8` is
-strongly normative and `0.3` mostly favors the LLM's direction. Homophily is
-the complement, `1.0 - normativity`.
+`workflow_adherence=1.0` ranks entirely by adherence to the proposed Plan,
+while `workflow_adherence=0.0` ranks entirely by continuity with the LLM's
+observed direction. Intermediate values blend those costs; for example, `0.8`
+strongly favors the workflow and `0.3` mostly favors opportunistic
+continuation. The execution-continuity weight is the complement,
+`1.0 - workflow_adherence`.
 
-`NORMATIVE`, `BALANCED`, and `HOMOPHILIC` are convenience presets for `1.0`,
-`0.5`, and `0.0`. They do not restrict the available character values.
+`WORKFLOW_ADHERENT`, `BALANCED`, and `OPPORTUNISTIC` are convenience presets
+for `1.0`, `0.5`, and `0.0`. They do not restrict the available policy values.
+
+## Plan provenance and route commitment
+
+A discovered Plan is a producer-resolved dependency subnetwork, not a plain
+ordered list. Alternative producers create distinct routes. This retains a
+meaningful refinement route even when its tools are a strict superset of a
+shorter direct route, while still grouping a shared executable prefix into one
+option.
+
+When an observed tool is valid on several current frontiers, those routes stay
+active. Once it is valid only on one branch, the Advisor narrows to that
+branch; a sibling that merely contains the same tool later is parked instead
+of being repeatedly recommended. Parked routes return only through recovery,
+backtracking, or a later deviation that genuinely makes them relevant.
+
+`supporting_plans` intentionally remains a compact tool-name view. Two exact
+routes can have the same tool names but different producer bindings, so advice
+history uses `supporting_route_keys` to replay the right route state.
 
 ## Exact artifact versions
 
@@ -208,7 +247,11 @@ advisor = Advisor(
 
 - Depth `1` shows only executable root tools.
 - Larger depths populate nested `continuations`.
-- `max_options` limits alternatives after ranking.
+- `max_options` limits each sibling list after ranking; it is not a global
+  budget across the whole preview tree.
+- A cycle's repeat and exit form one atomic control decision. Both remain
+  visible even when `max_options=1`; an executable prerequisite needed to
+  make the exit available may appear as `EXIT_PREPARATION`.
 - `command.options_truncated` means some executable root alternatives were
   hidden.
 - `option.options_truncated` means some preview alternatives were hidden.
@@ -216,7 +259,11 @@ advisor = Advisor(
   Plan ended.
 
 Cycles are never expanded into every possible iteration count. They appear as
-structural repeated possibilities only within the finite lookahead window.
+structural repeated possibilities only within the finite lookahead window. At
+an entered repeat-versus-exit gate, `REPEAT` ranks before `EXIT`, but both are
+kept selectable. Choosing the exit commits to its downstream route; failure or
+backtracking may restore the parked repeat. Target-producing cycles use
+`target_acceptance_required` as their exit instead of synthesizing a tool.
 
 ## Target responses
 

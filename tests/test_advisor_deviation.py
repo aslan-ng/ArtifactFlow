@@ -4,8 +4,8 @@ from artifactflow import Artifact, Project, Tool, Workflow
 from artifactflow.advisor import (
     Advisor,
     BALANCED,
-    HOMOPHILIC,
-    NORMATIVE,
+    OPPORTUNISTIC,
+    WORKFLOW_ADHERENT,
 )
 
 
@@ -193,7 +193,7 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
         advisor = Advisor(
             project,
             max_options=1,
-            character=HOMOPHILIC,
+            policy=OPPORTUNISTIC,
         )
 
         advisor.advise()
@@ -212,10 +212,10 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
         self.assertEqual(command.deviation.location, "WORKFLOW")
         self.assertEqual(command.deviation.proposed_options, ("Choose A",))
 
-    def test_character_changes_order_after_a_tool_network_deviation(self):
-        def advice_for(character):
+    def test_policy_changes_order_after_a_tool_network_deviation(self):
+        def advice_for(policy):
             project = make_network_deviation_project()
-            advisor = Advisor(project, character=character)
+            advisor = Advisor(project, policy=policy)
             advisor.advise()
             project.record_tool_success("Prepare")
             proposed = advisor.advise()
@@ -223,16 +223,16 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
             project.record_tool_success("Improvised step")
             return advisor, advisor.advise()
 
-        _, normative = advice_for(NORMATIVE)
-        _, homophilic = advice_for(HOMOPHILIC)
+        _, workflow_adherent = advice_for(WORKFLOW_ADHERENT)
+        _, opportunistic = advice_for(OPPORTUNISTIC)
         balanced_advisor, balanced = advice_for(BALANCED)
 
         self.assertEqual(
-            root_names(normative),
+            root_names(workflow_adherent),
             ("Preferred step", "Improvised finish"),
         )
         self.assertEqual(
-            root_names(homophilic),
+            root_names(opportunistic),
             ("Improvised finish", "Preferred step"),
         )
         self.assertEqual(
@@ -246,7 +246,7 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
 
         by_name = {
             option.tool_name: option
-            for option in normative.options
+            for option in workflow_adherent.options
         }
         self.assertEqual(
             by_name["Preferred step"].scope,
@@ -265,11 +265,11 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
             "CONTINUE_CURRENT",
         )
 
-    def test_normative_restore_completes_without_erasing_deviation_facts(
+    def test_workflow_adherent_restore_completes_without_erasing_deviation_facts(
         self,
     ):
         project = make_network_deviation_project()
-        advisor = Advisor(project, character=NORMATIVE)
+        advisor = Advisor(project, policy=WORKFLOW_ADHERENT)
         advisor.advise()
         project.record_tool_success("Prepare")
         advisor.advise()
@@ -299,9 +299,9 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
             replay.active.active_artifacts,
         )
 
-    def test_homophilic_continuation_completes_through_the_network(self):
+    def test_opportunistic_continuation_completes_through_the_network(self):
         project = make_network_deviation_project()
-        advisor = Advisor(project, character=HOMOPHILIC)
+        advisor = Advisor(project, policy=OPPORTUNISTIC)
         advisor.advise()
         project.record_tool_success("Prepare")
         advisor.advise()
@@ -326,7 +326,7 @@ class TestAdvisorFailureAndDeviation(unittest.TestCase):
         self,
     ):
         project = make_network_deviation_project()
-        advisor = Advisor(project, character=NORMATIVE)
+        advisor = Advisor(project, policy=WORKFLOW_ADHERENT)
         advisor.advise()
         project.record_tool_success("Prepare")
         advisor.advise()
@@ -374,7 +374,7 @@ class TestAdvisorDeviationRegressions(unittest.TestCase):
         workflow.starting_artifacts = ["Start"]
         workflow.target_artifacts = ["Result"]
         project = Project(workflow)
-        advisor = Advisor(project, character=HOMOPHILIC)
+        advisor = Advisor(project, policy=OPPORTUNISTIC)
 
         self.assertEqual(root_names(advisor.advise()), ("Prepare",))
         out_of_order = project.record_tool_success("Transform")
@@ -396,7 +396,7 @@ class TestAdvisorDeviationRegressions(unittest.TestCase):
 
     def test_dead_workflow_consumer_is_excluded_after_deviation(self):
         project = make_dead_workflow_continuation_project()
-        advisor = Advisor(project, character=HOMOPHILIC)
+        advisor = Advisor(project, policy=OPPORTUNISTIC)
         advisor.advise()
         project.record_tool_success("Prepare")
         advisor.advise()
@@ -447,7 +447,7 @@ class TestAdvisorDeviationRegressions(unittest.TestCase):
         network = workflow.to_tool_network()
         network.add_tool(Tool("Revise X", inputs=[x], outputs=[x]))
         project = Project(workflow, tool_network=network)
-        advisor = Advisor(project, character=HOMOPHILIC)
+        advisor = Advisor(project, policy=OPPORTUNISTIC)
 
         advisor.advise()
         prepared = project.record_tool_success("Prepare")
@@ -505,7 +505,7 @@ class TestAdvisorDeviationRegressions(unittest.TestCase):
         project = Project(workflow, tool_network=network)
         advisor = Advisor(
             project,
-            character=NORMATIVE,
+            policy=WORKFLOW_ADHERENT,
             max_options=1,
         )
 
@@ -515,7 +515,15 @@ class TestAdvisorDeviationRegressions(unittest.TestCase):
         advisor.advise()
         revised = project.record_tool_success("Revise X")
         x_v2 = revised.outputs[0]
-        self.assertNotIn("Probe X", root_names(advisor.advise()))
+        # A cycle gate is atomic even with max_options=1: refinement and the
+        # highest-ranked exit stay visible. A second exit may remain hidden.
+        gate = advisor.advise()
+        self.assertEqual(root_names(gate), ("Revise X", "Use X"))
+        self.assertEqual(
+            tuple(option.cycle_action for option in gate.options),
+            ("REPEAT", "EXIT"),
+        )
+        self.assertNotIn("Probe X", root_names(gate))
 
         project.record_tool_failure(
             "Probe X",
@@ -566,7 +574,7 @@ class TestAdvisorDeviationRegressions(unittest.TestCase):
         project = Project(workflow, tool_network=network)
         advisor = Advisor(
             project,
-            character=BALANCED,
+            policy=BALANCED,
             max_options=1,
         )
 

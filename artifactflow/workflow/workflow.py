@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Hashable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
-from itertools import combinations
 from typing import TYPE_CHECKING
 
 import networkx as nx
@@ -13,6 +12,7 @@ from artifactflow.tool.compatibility.tools_compatibility import tool_readiness
 from artifactflow.similarity.qap import QAPStudy
 
 if TYPE_CHECKING:
+    from artifactflow.network.network import _ProducerRoute
     from artifactflow.plan.plan import Plan
     from artifactflow.tool_network.tool_network import ToolNetwork
 
@@ -94,12 +94,14 @@ class Workflow(
         starting_artifacts: Iterable[str] | None = None,
         target_artifacts: Iterable[str] | None = None,
     ) -> list[Plan]:
-        """Return every minimal target-reaching plan in this workflow.
+        """Return every causally distinct target-reaching plan.
 
-        Alternative producers create separate plans. Tools in a directed
-        cycle are treated as one indivisible unit, so a repeatable cycle does
-        not create infinitely many plans for different iteration counts. The
-        search is exhaustive and therefore best suited to bounded workflows.
+        Alternative producer bindings create separate plans, including a
+        meaningful refinement route whose tool set contains a shorter direct
+        route. Tools in a directed cycle are treated as one indivisible unit,
+        so a repeatable cycle does not create infinitely many plans for
+        different iteration counts. The search is exhaustive and therefore
+        best suited to bounded workflows.
         """
         from artifactflow.plan.plan import Plan
 
@@ -124,100 +126,60 @@ class Workflow(
                 f"Unknown artifacts: {sorted(unknown_artifacts)}"
             )
 
-        tool_graph = self.to_tool_dependency_graph()
-        tool_positions = {
-            tool.name: position
-            for position, tool in enumerate(self.tools)
-        }
-        tool_units = [
-            frozenset(component)
-            for component in nx.strongly_connected_components(tool_graph)
-        ]
-        tool_units.sort(
-            key=lambda unit: min(tool_positions[name] for name in unit)
-        )
-
-        valid_tool_sets: list[frozenset[str]] = []
-        for unit_count in range(1, len(tool_units) + 1):
-            for selected_units in combinations(tool_units, unit_count):
-                selected_tools = frozenset().union(*selected_units)
-                if self._is_valid_plan(
-                    selected_tools,
-                    starts,
-                    targets,
-                ):
-                    valid_tool_sets.append(selected_tools)
-
-        minimal_tool_sets = [
-            selected_tools
-            for selected_tools in valid_tool_sets
-            if not any(
-                other_tools < selected_tools
-                for other_tools in valid_tool_sets
-            )
-        ]
-        minimal_tool_sets.sort(
-            key=lambda names: tuple(
-                position
-                for position, tool in enumerate(self.tools)
-                if tool.name in names
-            )
+        routes = self._discover_producer_routes(
+            boundary_artifacts=starts,
+            target_artifacts=targets,
+            validator=lambda route: self._is_valid_plan(
+                route,
+                starts,
+                targets,
+            ),
         )
 
         plans: list[Plan] = []
-        for selected_tools in minimal_tool_sets:
+        for route in routes:
             plan = Plan()
             for tool in self.tools:
-                if tool.name in selected_tools:
+                if tool.name in route.tool_names:
                     plan.add_tool(tool)
             plan.starting_artifacts = list(starts)
             plan.target_artifacts = list(targets)
+            plan.set_input_producers({
+                (tool_name, artifact_name): producer_names
+                for tool_name, artifact_name, producer_names
+                in route.input_producers
+            })
+            plan.set_target_producers({
+                target_name: producer_names
+                for target_name, producer_names
+                in route.target_producers
+            })
             plans.append(plan)
         return plans
 
     def _is_valid_plan(
         self,
-        selected_tools: frozenset[str],
+        route: _ProducerRoute,
         starting_artifacts: tuple[str, ...],
         target_artifacts: tuple[str, ...],
     ) -> bool:
-        """Return whether a tool subset is one complete plan."""
-        selected = [
-            tool
-            for tool in self.tools
-            if tool.name in selected_tools
-        ]
-        produced_artifacts = {
-            artifact.name
-            for tool in selected
-            for artifact in tool.outputs
-        }
-        if not set(target_artifacts) <= produced_artifacts:
+        """Return whether one producer-resolved route is a complete plan."""
+        if {
+            target_name
+            for target_name, _producer_names in route.target_producers
+        } != set(target_artifacts):
             return False
 
-        starting_names = set(starting_artifacts)
-        for tool in selected:
-            for artifact in tool.inputs:
-                if artifact.name in starting_names:
-                    continue
-                producers = {
-                    candidate.name
-                    for candidate in self.tools
-                    if any(
-                        output.name == artifact.name
-                        for output in candidate.outputs
-                    )
-                }
-                if producers and not producers & selected_tools:
-                    return False
-
-        plan_graph = self._typed_dependency_graph(selected_tools)
+        plan_graph = self._producer_route_graph(
+            route,
+            starting_artifacts,
+        )
 
         if any(
             not _has_positive_length_path(
                 plan_graph,
-                ("artifact", start),
-                ("artifact", target),
+                ("boundary", start),
+                ("target", target),
             )
             for start in starting_artifacts
             for target in target_artifacts
@@ -228,12 +190,12 @@ class Workflow(
             any(
                 nx.has_path(
                     plan_graph,
-                    ("tool", tool.name),
-                    ("artifact", target),
+                    ("tool", tool_name),
+                    ("target", target),
                 )
                 for target in target_artifacts
             )
-            for tool in selected
+            for tool_name in route.tool_names
         )
 
     @staticmethod

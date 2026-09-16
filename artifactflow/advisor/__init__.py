@@ -11,12 +11,12 @@ from .history import (
     ArtifactBinding,
 )
 from .policy import (
-    AdvisorCharacter,
     BALANCED,
     CandidateScope,
     CandidateTransition,
-    HOMOPHILIC,
-    NORMATIVE,
+    GuidancePolicy,
+    OPPORTUNISTIC,
+    WORKFLOW_ADHERENT,
 )
 
 __all__ = [
@@ -24,14 +24,14 @@ __all__ = [
     "AdviceHistory",
     "AdviceSnapshot",
     "Advisor",
-    "AdvisorCharacter",
     "AdvisorCommand",
     "ArtifactBinding",
     "BALANCED",
     "CandidateScope",
     "CandidateTransition",
     "DeviationContext",
-    "HOMOPHILIC",
-    "NORMATIVE",
+    "GuidancePolicy",
+    "OPPORTUNISTIC",
     "ToolOption",
+    "WORKFLOW_ADHERENT",
 ]

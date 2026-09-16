@@ -16,7 +16,9 @@ class CandidateScope(IntEnum):
 
 
 class CandidateTransition(IntEnum):
-    """How far a candidate moves from the agent's current direction."""
+    """
+    How far a candidate moves from the agent's current direction.
+    """
 
     CONTINUE_CURRENT = 0
     REJOIN = 1
@@ -24,42 +26,45 @@ class CandidateTransition(IntEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class AdvisorCharacter:
+class GuidancePolicy:
     """
-    Balance adherence to advice against following the agent's direction.
+    Balance workflow adherence against opportunistic continuation.
 
-    ``normativity=1`` ranks only by candidate scope. ``normativity=0``
-    ranks only by the transition from the current direction. Intermediate
+    ``workflow_adherence=1`` ranks only by candidate scope, favoring the
+    previously proposed workflow routes. ``workflow_adherence=0`` ranks only
+    by the transition from the agent's observed direction. Intermediate
     values blend the two costs at every decision; they are not probabilities.
     """
 
-    normativity: float = 1.0
+    workflow_adherence: float = 1.0
 
     def __post_init__(self) -> None:
-        value = self.normativity
+        value = self.workflow_adherence
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError("normativity must be a number between 0 and 1.")
+            raise TypeError(
+                "workflow_adherence must be a number between 0 and 1."
+            )
 
         normalized = float(value)
         if not math.isfinite(normalized) or not 0.0 <= normalized <= 1.0:
-            raise ValueError("normativity must be between 0 and 1.")
-        object.__setattr__(self, "normativity", normalized)
+            raise ValueError("workflow_adherence must be between 0 and 1.")
+        object.__setattr__(self, "workflow_adherence", normalized)
 
     @property
-    def homophily(self) -> float:
-        """Return the complementary preference for the current direction."""
-        return 1.0 - self.normativity
+    def continuity_weight(self) -> float:
+        """Return the complementary preference for execution continuity."""
+        return 1.0 - self.workflow_adherence
 
     def cost(
         self,
         scope: CandidateScope,
         transition: CandidateTransition,
     ) -> float:
-        """Return the blended character cost; lower values rank first."""
+        """Return the blended policy cost; lower values rank first."""
         _check_candidate_kinds(scope, transition)
         return (
-            self.normativity * scope.value
-            + self.homophily * transition.value
+            self.workflow_adherence * scope.value
+            + self.continuity_weight * transition.value
         )
 
     def rank(
@@ -75,7 +80,7 @@ class AdvisorCharacter:
 
         Feasibility and recovery exhaustion must be checked before ranking.
         The small integer fields are deliberately only tie-breakers so the
-        character remains easy to understand and extend later.
+        policy remains easy to understand and extend later.
         """
         for name, value in (
             ("missing_artifacts", missing_artifacts),
@@ -105,16 +110,16 @@ def _check_candidate_kinds(
         raise TypeError("transition must be a CandidateTransition.")
 
 
-NORMATIVE = AdvisorCharacter(normativity=1.0)
-BALANCED = AdvisorCharacter(normativity=0.5)
-HOMOPHILIC = AdvisorCharacter(normativity=0.0)
+WORKFLOW_ADHERENT = GuidancePolicy(workflow_adherence=1.0)
+BALANCED = GuidancePolicy(workflow_adherence=0.5)
+OPPORTUNISTIC = GuidancePolicy(workflow_adherence=0.0)
 
 
 __all__ = [
-    "AdvisorCharacter",
     "BALANCED",
     "CandidateScope",
     "CandidateTransition",
-    "HOMOPHILIC",
-    "NORMATIVE",
+    "GuidancePolicy",
+    "OPPORTUNISTIC",
+    "WORKFLOW_ADHERENT",
 ]

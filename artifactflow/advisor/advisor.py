@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import networkx as nx
@@ -14,12 +14,12 @@ from artifactflow.advisor.history import (
     AdviceSnapshot,
 )
 from artifactflow.advisor.policy import (
-    AdvisorCharacter,
     CandidateScope,
     CandidateTransition,
-    NORMATIVE,
+    GuidancePolicy,
+    WORKFLOW_ADHERENT,
 )
-from artifactflow.plan.plan import Plan
+from artifactflow.plan.plan import Plan, PlanRouteKey
 from artifactflow.project.log import (
     ArtifactAvailable,
     ArtifactVersion,
@@ -33,6 +33,7 @@ from artifactflow.tool.tool import Tool
 
 
 ToolAction = Literal["RUN", "RETRY", "ALTERNATIVE"]
+CycleAction = Literal["REPEAT", "EXIT", "EXIT_PREPARATION"]
 ToolOutcome = Literal[
     "CONTINUE",
     "TARGETS_READY",
@@ -69,6 +70,8 @@ class ToolOption:
         "RESTORE_CHECKPOINT",
     ] = "CONTINUE_CURRENT"
     supporting_plans: tuple[tuple[str, ...], ...] = ()
+    cycle_action: CycleAction | None = None
+    supporting_route_keys: tuple[PlanRouteKey, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +102,11 @@ class _AdviceState:
 
     available_artifacts: set[str]
     active_artifacts: dict[str, ArtifactVersion]
+    active_producers: dict[str, str | None]
     produced_artifacts: set[str]
     target_candidates: dict[str, ArtifactVersion]
     next_tools: tuple[str, ...]
-    plan_signatures: tuple[tuple[str, ...], ...] = ()
+    route_keys: tuple[PlanRouteKey, ...] = ()
     completed_tools: tuple[str, ...] = ()
     last_tool: str | None = None
     targets_accepted: bool = False
@@ -130,6 +134,8 @@ class _Candidate:
     decision_index: int | None = None
     remaining_tools: int = 0
     stable_order: int = 0
+    cycle_action: CycleAction | None = None
+    cycle_gate: tuple[str, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -139,10 +145,11 @@ class _ReplayState:
     active: _AdviceState
     decisions: list[_DecisionFrame]
     external_artifacts: dict[str, ArtifactVersion]
+    artifact_producers: dict[tuple[str, int], str | None]
     recovering: bool = False
     last_failed_tool: str | None = None
     blocked: bool = False
-    proposed_plan_signatures: tuple[tuple[str, ...], ...] = ()
+    proposed_route_keys: tuple[PlanRouteKey, ...] = ()
     last_deviation: DeviationContext | None = None
     deviating: bool = False
     last_observed_tool: str | None = None
@@ -156,7 +163,8 @@ class Advisor:
     options are executable alternatives. Their nested continuations are
     success-assuming previews controlled by ``lookahead_depth`` and are not
     executable yet. ``max_options`` limits the visible breadth at each
-    decision point.
+    decision point, except that an active cycle's repeat/exit pair is kept as
+    one atomic control decision even when the configured limit is one.
 
     When retry allowance remains after a failure, the Advisor offers that
     retry first and then unchecked siblings when breadth permits.
@@ -164,9 +172,10 @@ class Advisor:
     decision visit. Once the current decision is exhausted, the nearest
     earlier decision with alternatives is restored. A target candidate
     requires acceptance only when a continuation can produce a fresh
-    candidate. ``character`` accepts an :class:`AdvisorCharacter`; its
-    ``normativity`` may be any number from 0.0 through 1.0, not only one of
-    the named presets.
+    candidate. At an entered optimization-cycle gate, repeating is preferred
+    while its exit remains visible and selectable. ``policy`` accepts a
+    :class:`GuidancePolicy`; its ``workflow_adherence`` may be any number
+    from 0.0 through 1.0, not only one of the named presets.
     """
 
     def __init__(
@@ -175,7 +184,7 @@ class Advisor:
         *,
         lookahead_depth: int = 1,
         max_options: int | None = None,
-        character: AdvisorCharacter = NORMATIVE,
+        policy: GuidancePolicy = WORKFLOW_ADHERENT,
         advice_history: AdviceHistory | None = None,
         max_retries: int = 1,
     ) -> None:
@@ -198,8 +207,8 @@ class Advisor:
             raise TypeError("max_retries must be an integer.")
         if max_retries < 0:
             raise ValueError("max_retries cannot be negative.")
-        if not isinstance(character, AdvisorCharacter):
-            raise TypeError("character must be an AdvisorCharacter.")
+        if not isinstance(policy, GuidancePolicy):
+            raise TypeError("policy must be a GuidancePolicy.")
         if advice_history is not None and not isinstance(
             advice_history,
             AdviceHistory,
@@ -210,7 +219,7 @@ class Advisor:
         self.lookahead_depth = lookahead_depth
         self.max_options = max_options
         self._max_retries = max_retries
-        self.character = character
+        self.policy = policy
         self.advice_history = (
             advice_history
             if advice_history is not None
@@ -232,10 +241,17 @@ class Advisor:
                 "The workflow has no route from its starting artifacts "
                 "to all target artifacts."
             )
-        self._plans_by_signature = {
-            self._plan_signature(plan): plan
+        self._plans_by_route_key = {
+            self._plan_route_key(plan): plan
             for plan in self.plans
         }
+        self._plans_by_signature: dict[tuple[str, ...], tuple[Plan, ...]] = {}
+        for plan in self.plans:
+            signature = self._plan_signature(plan)
+            self._plans_by_signature[signature] = (
+                *self._plans_by_signature.get(signature, ()),
+                plan,
+            )
 
         routes = tuple(
             plan.input_requirements().initial_artifacts
@@ -280,7 +296,7 @@ class Advisor:
             self.lookahead_depth,
             self.max_options,
             self.max_retries,
-            self.character.normativity,
+            self.policy.workflow_adherence,
         )
 
     def advise(self) -> AdvisorCommand:
@@ -301,6 +317,7 @@ class Advisor:
                     tool_name=option.tool_name,
                     input_artifacts=option.input_artifacts,
                     supporting_plan_signatures=option.supporting_plans,
+                    supporting_route_keys=option.supporting_route_keys,
                 )
                 for option in command.options
             ),
@@ -401,6 +418,7 @@ class Advisor:
             active=initial_state,
             decisions=[],
             external_artifacts={},
+            artifact_producers={},
         )
         self._push_decision(replay)
 
@@ -429,8 +447,8 @@ class Advisor:
             if self._state_is_complete(replay.active):
                 if isinstance(event, (ToolSucceeded, ToolFailed)):
                     self._validate_tool_event(event)
-                    proposed_plans = self._plans_for_signatures(
-                        replay.proposed_plan_signatures
+                    proposed_plans = self._plans_for_route_keys(
+                        replay.proposed_route_keys
                     )
                     replay.last_deviation = DeviationContext(
                         observed_tool=event.tool_name,
@@ -500,8 +518,8 @@ class Advisor:
                 snapshot_consumed,
             )
             if proposed_plans:
-                replay.proposed_plan_signatures = tuple(
-                    self._plan_signature(plan)
+                replay.proposed_route_keys = tuple(
+                    self._plan_route_key(plan)
                     for plan in proposed_plans
                 )
 
@@ -514,7 +532,7 @@ class Advisor:
                 candidate is not None
                 and (
                     self._snapshot_contains_event(active_snapshot, event)
-                    or not replay.proposed_plan_signatures
+                    or not replay.proposed_route_keys
                     or candidate.scope is CandidateScope.PROPOSED_PLAN
                 )
             )
@@ -536,12 +554,11 @@ class Advisor:
                     proposed_options=visible_options,
                 )
                 replay.deviating = True
-            elif replay.proposed_plan_signatures:
-                replay.proposed_plan_signatures = tuple(
-                    signature
-                    for signature in replay.proposed_plan_signatures
-                    if event.tool_name in signature
-                ) or replay.proposed_plan_signatures
+            elif candidate is not None and candidate.supporting_plans:
+                replay.proposed_route_keys = tuple(
+                    self._plan_route_key(plan)
+                    for plan in candidate.supporting_plans
+                )
 
             snapshot_consumed = True
 
@@ -600,11 +617,16 @@ class Advisor:
             raise ValueError(f"Unknown artifact: {artifact_name!r}")
 
         replay.external_artifacts[artifact_name] = artifact
+        replay.artifact_producers[
+            (artifact_name, artifact.version)
+        ] = None
         replay.active.available_artifacts.add(artifact_name)
         replay.active.active_artifacts[artifact_name] = artifact
+        replay.active.active_producers[artifact_name] = None
         for decision in replay.decisions:
             decision.checkpoint.available_artifacts.add(artifact_name)
             decision.checkpoint.active_artifacts[artifact_name] = artifact
+            decision.checkpoint.active_producers[artifact_name] = None
 
     @staticmethod
     def _activate_event_inputs(
@@ -621,6 +643,11 @@ class Advisor:
             artifact_name = artifact.artifact_name
             replay.active.available_artifacts.add(artifact_name)
             replay.active.active_artifacts[artifact_name] = artifact
+            replay.active.active_producers[artifact_name] = (
+                replay.artifact_producers[
+                    (artifact_name, artifact.version)
+                ]
+            )
 
         if replay.decisions:
             checkpoint = replay.decisions[-1].checkpoint
@@ -628,6 +655,11 @@ class Advisor:
                 artifact_name = artifact.artifact_name
                 checkpoint.available_artifacts.add(artifact_name)
                 checkpoint.active_artifacts[artifact_name] = artifact
+                checkpoint.active_producers[artifact_name] = (
+                    replay.artifact_producers[
+                        (artifact_name, artifact.version)
+                    ]
+                )
 
     def _validate_tool_event(
         self,
@@ -718,6 +750,10 @@ class Advisor:
                 else ()
             ),
         )
+        for artifact in event.outputs:
+            replay.artifact_producers[
+                (artifact.artifact_name, artifact.version)
+            ] = tool_name
         replay.recovering = False
         replay.last_failed_tool = None
 
@@ -742,6 +778,10 @@ class Advisor:
                 )
                 replay.active.active_artifacts.update(
                     replay.external_artifacts
+                )
+                replay.active.active_producers.update(
+                    (artifact_name, None)
+                    for artifact_name in replay.external_artifacts
                 )
                 replay.blocked = True
                 return
@@ -791,11 +831,12 @@ class Advisor:
         state = _AdviceState(
             available_artifacts=set(),
             active_artifacts={},
+            active_producers={},
             produced_artifacts=set(),
             target_candidates={},
             next_tools=(),
-            plan_signatures=tuple(
-                self._plan_signature(plan)
+            route_keys=tuple(
+                self._plan_route_key(plan)
                 for plan in self.plans
             ),
         )
@@ -825,6 +866,11 @@ class Advisor:
                 for artifact in output_versions
             }
         )
+        active_producers = dict(state.active_producers)
+        active_producers.update(
+            (artifact_name, tool.name)
+            for artifact_name in output_names
+        )
 
         produced_artifacts = set(state.produced_artifacts)
         target_candidates = dict(state.target_candidates)
@@ -834,25 +880,30 @@ class Advisor:
                 target_candidates[artifact.artifact_name] = artifact
 
         if not supporting_plans:
-            active_signatures = set(state.plan_signatures)
-            supporting_plans = tuple(
+            active_route_keys = set(state.route_keys)
+            eligible_plans = tuple(
                 plan
-                for plan in self._plans_by_signature.values()
-                if plan.contains_tool(tool.name)
-                and (
-                    not active_signatures
-                    or self._plan_signature(plan) in active_signatures
+                for route_key, plan in self._plans_by_route_key.items()
+                if (
+                    not active_route_keys
+                    or route_key in active_route_keys
                 )
+            )
+            supporting_plans = self._frontier_plans(
+                state,
+                eligible_plans,
+                tool.name,
             )
 
         next_state = _AdviceState(
             available_artifacts=available_artifacts,
             active_artifacts=active_artifacts,
+            active_producers=active_producers,
             produced_artifacts=produced_artifacts,
             target_candidates=target_candidates,
             next_tools=(),
-            plan_signatures=tuple(dict.fromkeys(
-                self._plan_signature(plan)
+            route_keys=tuple(dict.fromkeys(
+                self._plan_route_key(plan)
                 for plan in supporting_plans
             )),
             completed_tools=(*state.completed_tools, tool.name),
@@ -960,6 +1011,31 @@ class Advisor:
 
                 blocked = False
                 for artifact in tool.inputs:
+                    if plan.has_explicit_producers:
+                        producers = set(plan.producers_for_input(
+                            tool.name,
+                            artifact.name,
+                        ))
+                        if not producers:
+                            # External inputs may be missing; the option owns
+                            # the requirement and reports it to the caller.
+                            continue
+                        if (
+                            state.active_producers.get(
+                                artifact.name
+                            ) in producers
+                            or (
+                                artifact.name in bootstrap
+                                and plan.is_feedback_input(
+                                    tool.name,
+                                    artifact.name,
+                                )
+                            )
+                        ):
+                            continue
+                        blocked = True
+                        break
+
                     if artifact.name in available:
                         continue
                     producers = {
@@ -1084,7 +1160,7 @@ class Advisor:
             )
             supporting_plans = tuple(dict(
                 (
-                    self._plan_signature(plan),
+                    self._plan_route_key(plan),
                     plan,
                 )
                 for plan in (
@@ -1106,12 +1182,17 @@ class Advisor:
                     previous.stable_order,
                     candidate.stable_order,
                 ),
+                cycle_action=preferred.cycle_action,
             )
 
         valid_candidates = tuple(
             candidate
             for candidate in merged.values()
             if self._candidate_reaches_useful_scope(replay, candidate)
+        )
+        valid_candidates = self._mark_cycle_gate_candidates(
+            replay.active,
+            valid_candidates,
         )
         return tuple(sorted(
             valid_candidates,
@@ -1155,29 +1236,33 @@ class Advisor:
                 replay,
             )
         if supporting_plans is None:
-            active_signatures = set(candidate_state.plan_signatures)
-            plans = tuple(
+            active_route_keys = set(candidate_state.route_keys)
+            active_plans = tuple(
                 plan
-                for signature, plan in self._plans_by_signature.items()
-                if plan.contains_tool(tool_name)
-                and (
-                    not active_signatures
-                    or signature in active_signatures
+                for route_key, plan in self._plans_by_route_key.items()
+                if (
+                    not active_route_keys
+                    or route_key in active_route_keys
                 )
+            )
+            plans = self._frontier_plans(
+                candidate_state,
+                active_plans,
+                tool_name,
             )
         else:
             plans = supporting_plans
-        proposed_signatures = set(replay.proposed_plan_signatures)
+        proposed_route_keys = set(replay.proposed_route_keys)
         proposed_plans = tuple(
             plan
             for plan in plans
-            if self._plan_signature(plan) in proposed_signatures
+            if self._plan_route_key(plan) in proposed_route_keys
         )
         if proposed_plans:
             scope = CandidateScope.PROPOSED_PLAN
             plans = proposed_plans
         elif (
-            not proposed_signatures
+            not proposed_route_keys
             and not replay.deviating
             and transition is CandidateTransition.CONTINUE_CURRENT
             and self.project.workflow.contains_tool(tool_name)
@@ -1224,7 +1309,7 @@ class Advisor:
         self,
         replay: _ReplayState,
         candidate: _Candidate,
-    ) -> tuple[int, float, int, int, int]:
+    ) -> tuple[int, int, float, int, int, int]:
         state = self._candidate_state(replay, candidate)
         missing = len(self._missing_inputs(candidate.tool_name, state))
         retry_tier = 1
@@ -1237,15 +1322,44 @@ class Advisor:
                 )
             ):
                 retry_tier = 0
+        policy_rank = self.policy.rank(
+            candidate.scope,
+            candidate.transition,
+            missing_artifacts=missing,
+            remaining_tools=candidate.remaining_tools,
+            stable_order=candidate.stable_order,
+        )
+        cost, missing_count, remaining_tools, stable_order = policy_rank
         return (
             retry_tier,
-            *self.character.rank(
-                candidate.scope,
-                candidate.transition,
-                missing_artifacts=missing,
-                remaining_tools=candidate.remaining_tools,
-                stable_order=candidate.stable_order,
+            0 if candidate.cycle_action == "REPEAT" else 1,
+            cost,
+            missing_count,
+            remaining_tools,
+            stable_order,
+        )
+
+    def _preview_candidate_rank(
+        self,
+        state: _AdviceState,
+        candidate: _Candidate,
+    ) -> tuple[int, float, int, int, int]:
+        policy_rank = self.policy.rank(
+            candidate.scope,
+            candidate.transition,
+            missing_artifacts=len(
+                self._missing_inputs(candidate.tool_name, state)
             ),
+            remaining_tools=candidate.remaining_tools,
+            stable_order=candidate.stable_order,
+        )
+        cost, missing_count, remaining_tools, stable_order = policy_rank
+        return (
+            0 if candidate.cycle_action == "REPEAT" else 1,
+            cost,
+            missing_count,
+            remaining_tools,
+            stable_order,
         )
 
     def _limit_candidates(
@@ -1254,7 +1368,61 @@ class Advisor:
     ) -> tuple[_Candidate, ...]:
         if self.max_options is None:
             return candidates
-        return candidates[:self.max_options]
+        if len(candidates) <= self.max_options:
+            return candidates
+
+        repeat = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.cycle_action == "REPEAT"
+            ),
+            None,
+        )
+        repeat_gate = repeat.cycle_gate if repeat is not None else None
+        exit_candidate = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.cycle_action == "EXIT"
+                and candidate.cycle_gate == repeat_gate
+            ),
+            None,
+        )
+        if exit_candidate is None:
+            exit_candidate = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate.cycle_action == "EXIT_PREPARATION"
+                    and candidate.cycle_gate == repeat_gate
+                ),
+                None,
+            )
+        if repeat is None or exit_candidate is None:
+            return candidates[:self.max_options]
+
+        # A repeat/exit gate is one atomic control decision. Preserve both
+        # sides even when the ordinary breadth cap is one, otherwise a caller
+        # that follows visible advice can never choose to leave the cycle.
+        visible_count = max(self.max_options, 2)
+        protected = {id(repeat), id(exit_candidate)}
+        selected = [
+            candidate
+            for candidate in candidates
+            if id(candidate) in protected
+        ]
+        for candidate in candidates:
+            if len(selected) >= visible_count:
+                break
+            if id(candidate) not in protected:
+                selected.append(candidate)
+        selected_ids = {id(candidate) for candidate in selected}
+        return tuple(
+            candidate
+            for candidate in candidates
+            if id(candidate) in selected_ids
+        )
 
     def _candidate_state(
         self,
@@ -1353,25 +1521,53 @@ class Advisor:
     ) -> tuple[Plan, ...]:
         if snapshot is not None and not snapshot_consumed:
             event_inputs = self._event_input_artifacts(event)
-            signatures = tuple(dict.fromkeys(
-                signature
+            matching_options = tuple(
+                option
                 for option in snapshot.options
                 if self._advised_option_matches_inputs(
                     option,
                     event.tool_name,
                     event_inputs,
                 )
+            )
+            route_keys = tuple(dict.fromkeys(
+                route_key
+                for option in matching_options
+                for route_key in option.supporting_route_keys
+            ))
+            if route_keys:
+                plans = self._plans_for_route_keys(route_keys)
+                if plans:
+                    return plans
+
+            signatures = tuple(dict.fromkeys(
+                signature
+                for option in matching_options
                 for signature in option.supporting_plan_signatures
             ))
-            if not signatures:
-                signatures = tuple(dict.fromkeys(
-                    signature
-                    for option in snapshot.options
-                    for signature in option.supporting_plan_signatures
-                ))
+            if signatures:
+                plans = self._plans_for_signatures(signatures)
+                if plans:
+                    return plans
+
+            route_keys = tuple(dict.fromkeys(
+                route_key
+                for option in snapshot.options
+                for route_key in option.supporting_route_keys
+            ))
+            if route_keys:
+                plans = self._plans_for_route_keys(route_keys)
+                if plans:
+                    return plans
+
+            signatures = tuple(dict.fromkeys(
+                signature
+                for option in snapshot.options
+                for signature in option.supporting_plan_signatures
+            ))
             return self._plans_for_signatures(signatures)
-        return self._plans_for_signatures(
-            replay.proposed_plan_signatures
+        return self._plans_for_route_keys(
+            replay.proposed_route_keys
         )
 
     def _network_continuation_plans(
@@ -1388,22 +1584,22 @@ class Advisor:
         )
         if not anchors:
             return ()
-        try:
-            plans = tuple(
-                self.project.tool_network.discover_continuation_plans(
-                    available_artifacts=replay.active.available_artifacts,
-                    anchor_artifacts=anchors,
-                    target_artifacts=self.project.target_artifacts,
-                )
+        plans = tuple(
+            self.project.tool_network.discover_continuation_plans(
+                available_artifacts=tuple(
+                    artifact_name
+                    for artifact_name
+                    in self.project.tool_network.artifact_names
+                    if artifact_name
+                    in replay.active.available_artifacts
+                ),
+                anchor_artifacts=anchors,
+                target_artifacts=self.project.target_artifacts,
             )
-            for plan in plans:
-                self._plans_by_signature.setdefault(
-                    self._plan_signature(plan),
-                    plan,
-                )
-            return plans
-        except ValueError:
-            return ()
+        )
+        for plan in plans:
+            self._register_plan(plan)
+        return plans
 
     def _plan_roots(
         self,
@@ -1415,6 +1611,28 @@ class Advisor:
         for tool in plan.tools:
             blocked_by_internal_producer = False
             for artifact in tool.inputs:
+                if plan.has_explicit_producers:
+                    producers = set(plan.producers_for_input(
+                        tool.name,
+                        artifact.name,
+                    ))
+                    if not producers:
+                        continue
+                    if state.active_producers.get(
+                        artifact.name
+                    ) in producers:
+                        continue
+                    if (
+                        artifact.name in initial_requirements
+                        and plan.is_feedback_input(
+                            tool.name,
+                            artifact.name,
+                        )
+                    ):
+                        continue
+                    blocked_by_internal_producer = True
+                    break
+
                 if artifact.name in state.available_artifacts:
                     continue
                 if artifact.name in initial_requirements:
@@ -1441,20 +1659,185 @@ class Advisor:
             if plan.contains_tool(tool_name)
         )
 
+    def _frontier_plans(
+        self,
+        state: _AdviceState,
+        plans: Iterable[Plan],
+        tool_name: str,
+    ) -> tuple[Plan, ...]:
+        """Return Plans for which a tool is valid at this exact state."""
+        return tuple(
+            plan
+            for plan in plans
+            if tool_name in self._plan_frontier(state, (plan,))
+        )
+
+    def _cycle_roles(
+        self,
+        state: _AdviceState,
+        tool_name: str,
+        plans: Iterable[Plan],
+    ) -> tuple[tuple[tuple[str, ...], CycleAction], ...]:
+        """Return this move's role at each entered structural cycle.
+
+        Completed cycle members, rather than only the globally last tool,
+        identify an active optimization visit. Independent prerequisite work
+        may legitimately occur between the cycle result and its gate.
+        """
+        completed = set(state.completed_tools)
+        roles_by_gate: dict[tuple[str, ...], set[CycleAction]] = {}
+        for plan in plans:
+            tool_graph = plan.to_tool_dependency_graph()
+            if tool_name not in tool_graph:
+                continue
+            for component in nx.strongly_connected_components(tool_graph):
+                if not (
+                    len(component) > 1
+                    or any(
+                        tool_graph.has_edge(name, name)
+                        for name in component
+                    )
+                ):
+                    continue
+                if not completed.intersection(component):
+                    continue
+                gate = tuple(
+                    name
+                    for name in self.project.tool_network.tool_names
+                    if name in component
+                )
+                role: CycleAction | None = None
+                if tool_name in component:
+                    role = "REPEAT"
+                else:
+                    exit_tools = {
+                        successor
+                        for member in component
+                        for successor in tool_graph.successors(member)
+                        if successor not in component
+                    }
+                    if tool_name in exit_tools:
+                        role = "EXIT"
+                    elif any(
+                        nx.has_path(tool_graph, tool_name, exit_tool)
+                        for exit_tool in exit_tools
+                    ):
+                        role = "EXIT_PREPARATION"
+                if role is not None:
+                    roles_by_gate.setdefault(gate, set()).add(role)
+
+        return tuple(
+            (gate, next(iter(roles)))
+            for gate, roles in roles_by_gate.items()
+            if len(roles) == 1
+        )
+
+    def _mark_cycle_gate_candidates(
+        self,
+        state: _AdviceState,
+        candidates: Iterable[_Candidate],
+    ) -> tuple[_Candidate, ...]:
+        """Expose cycle roles only at a real repeat-versus-exit gate."""
+        candidates = tuple(candidates)
+        roles_by_candidate = tuple(
+            dict(self._cycle_roles(
+                state,
+                candidate.tool_name,
+                candidate.supporting_plans,
+            ))
+            if candidate.transition is CandidateTransition.CONTINUE_CURRENT
+            else {}
+            for candidate in candidates
+        )
+        actions_by_gate: dict[tuple[str, ...], set[CycleAction]] = {}
+        for roles in roles_by_candidate:
+            for gate, action in roles.items():
+                actions_by_gate.setdefault(gate, set()).add(action)
+
+        acceptance_exit = (
+            self._targets_ready(state)
+            and self._acceptance_required(state)
+        )
+        eligible_gates = {
+            gate
+            for gate, actions in actions_by_gate.items()
+            if "REPEAT" in actions
+            and (
+                acceptance_exit
+                or "EXIT" in actions
+                or "EXIT_PREPARATION" in actions
+            )
+        }
+        marked: list[_Candidate] = []
+        for candidate, roles in zip(
+            candidates,
+            roles_by_candidate,
+            strict=True,
+        ):
+            selected = next(
+                (
+                    (gate, action)
+                    for preferred_action in (
+                        "REPEAT",
+                        "EXIT",
+                        "EXIT_PREPARATION",
+                    )
+                    for gate, action in roles.items()
+                    if gate in eligible_gates
+                    and action == preferred_action
+                ),
+                None,
+            )
+            marked.append(replace(
+                candidate,
+                cycle_action=(selected[1] if selected is not None else None),
+                cycle_gate=(selected[0] if selected is not None else None),
+            ))
+        return tuple(marked)
+
     @staticmethod
     def _plan_signature(plan: Plan) -> tuple[str, ...]:
         return tuple(plan.tool_names)
+
+    @staticmethod
+    def _plan_route_key(plan: Plan) -> PlanRouteKey:
+        return plan.route_key
+
+    def _register_plan(self, plan: Plan) -> None:
+        route_key = self._plan_route_key(plan)
+        self._plans_by_route_key.setdefault(route_key, plan)
+        signature = self._plan_signature(plan)
+        existing = self._plans_by_signature.get(signature, ())
+        if not any(
+            self._plan_route_key(candidate) == route_key
+            for candidate in existing
+        ):
+            self._plans_by_signature[signature] = (*existing, plan)
+
+    def _plans_for_route_keys(
+        self,
+        route_keys: Iterable[PlanRouteKey],
+    ) -> tuple[Plan, ...]:
+        return tuple(
+            plan
+            for route_key in route_keys
+            if (
+                plan := self._plans_by_route_key.get(route_key)
+            ) is not None
+        )
 
     def _plans_for_signatures(
         self,
         signatures: Iterable[tuple[str, ...]],
     ) -> tuple[Plan, ...]:
-        return tuple(
-            plan
+        return tuple(dict(
+            (
+                self._plan_route_key(plan),
+                plan,
+            )
             for signature in signatures
-            if (plan := self._plans_by_signature.get(tuple(signature)))
-            is not None
-        )
+            for plan in self._plans_by_signature.get(tuple(signature), ())
+        ).values())
 
     def _missing_inputs(
         self,
@@ -1611,6 +1994,10 @@ class Advisor:
         state = self._copy_state(decision.checkpoint)
         state.available_artifacts.update(replay.external_artifacts)
         state.active_artifacts.update(replay.external_artifacts)
+        state.active_producers.update(
+            (artifact_name, None)
+            for artifact_name in replay.external_artifacts
+        )
         return state
 
     @staticmethod
@@ -1618,10 +2005,11 @@ class Advisor:
         return _AdviceState(
             available_artifacts=set(state.available_artifacts),
             active_artifacts=dict(state.active_artifacts),
+            active_producers=dict(state.active_producers),
             produced_artifacts=set(state.produced_artifacts),
             target_candidates=dict(state.target_candidates),
             next_tools=state.next_tools,
-            plan_signatures=state.plan_signatures,
+            route_keys=state.route_keys,
             completed_tools=state.completed_tools,
             last_tool=state.last_tool,
             targets_accepted=state.targets_accepted,
@@ -1692,11 +2080,7 @@ class Advisor:
                 next_state,
                 candidate,
             )
-            visible_candidates = (
-                next_candidates
-                if self.max_options is None
-                else next_candidates[:self.max_options]
-            )
+            visible_candidates = self._limit_candidates(next_candidates)
             options_truncated = (
                 len(visible_candidates) < len(next_candidates)
             )
@@ -1739,15 +2123,31 @@ class Advisor:
                 else "CONTINUE_CURRENT"
             ),
             supporting_plans=(
-                tuple(
+                tuple(dict.fromkeys(
                     self._plan_signature(plan)
                     for plan in candidate.supporting_plans
-                )
+                ))
                 if candidate is not None
-                else tuple(
+                else tuple(dict.fromkeys(
                     self._plan_signature(plan)
                     for plan in self._supporting_plans(tool_name)
-                )
+                ))
+            ),
+            cycle_action=(
+                candidate.cycle_action
+                if candidate is not None
+                else None
+            ),
+            supporting_route_keys=(
+                tuple(dict.fromkeys(
+                    self._plan_route_key(plan)
+                    for plan in candidate.supporting_plans
+                ))
+                if candidate is not None
+                else tuple(dict.fromkeys(
+                    self._plan_route_key(plan)
+                    for plan in self._supporting_plans(tool_name)
+                ))
             ),
         )
 
@@ -1759,16 +2159,16 @@ class Advisor:
         """Rank success-assuming preview branches like executable roots."""
         candidates: list[_Candidate] = []
         for stable_order, tool_name in enumerate(state.next_tools):
-            inherited_plans = tuple(
-                plan
-                for plan in (
+            inherited_plans = self._frontier_plans(
+                state,
+                (
                     parent.supporting_plans
                     if parent is not None
                     else self.plans
-                )
-                if plan.contains_tool(tool_name)
+                ),
+                tool_name,
             )
-            plans = inherited_plans or self._supporting_plans(tool_name)
+            plans = inherited_plans
             if (
                 parent is not None
                 and parent.scope is CandidateScope.PROPOSED_PLAN
@@ -1804,17 +2204,13 @@ class Advisor:
                     ),
                 )
             )
-        return tuple(sorted(
+        marked_candidates = self._mark_cycle_gate_candidates(
+            state,
             candidates,
-            key=lambda option: self.character.rank(
-                option.scope,
-                option.transition,
-                missing_artifacts=len(
-                    self._missing_inputs(option.tool_name, state)
-                ),
-                remaining_tools=option.remaining_tools,
-                stable_order=option.stable_order,
-            ),
+        )
+        return tuple(sorted(
+            marked_candidates,
+            key=lambda option: self._preview_candidate_rank(state, option),
         ))
 
     def _bootstrap_routes(
