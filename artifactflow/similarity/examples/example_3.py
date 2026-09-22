@@ -6,6 +6,7 @@ from artifactflow.workflow.examples.example_1 import workflow
 
 workflows = tool_network.similar_workflows(
     workflow=workflow,
+    target_artifacts=["Artifact 5"],
 )
 similarity_scores = [
     similarity

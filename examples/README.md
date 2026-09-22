@@ -145,19 +145,38 @@ which is not necessarily the newest version anywhere in the factual history.
 8. `08_deviation_policy/` — deviate into the wider ToolNetwork and compare
    how workflow-adherent and opportunistic policies order the same valid
    continuations.
+9. `09_design/` — discover cyclic CAD workflows inside a ToolNetwork and rank
+   them by structural similarity.
+10. `10_resume_from_history/` — reconstruct an `ExecutionLog` from canonical
+   stored events, inject it into a Project, and receive the first advice from
+   the middle of an existing run.
 
-Each example separates two concerns:
+The orchestration examples separate two concerns:
 
 - `workflow.py` defines the artifacts, tools, and workflow. Running it saves
-  `workflow.png` in the same folder. Example 08 also saves
-  `tool_network.png` so its wider technical route is visible.
+  `workflow.png` in the same folder. Example 08 also saves `tool_network.png`
+  so its wider technical route is visible.
 - `execution.py` imports that workflow and demonstrates the advice loop.
+
+Example 09 is a standalone design exploration: `tools.py` defines its wider
+ToolNetwork and `workflow.py` discovers and compares candidate workflows.
 
 For example, run both parts of the linear example from the repository root:
 
 ```bash
 python examples/01_linear_workflow/workflow.py
 python examples/01_linear_workflow/execution.py
+```
+
+The history-resume example is intentionally different: `execution.py` first
+constructs immutable artifact versions and execution events as if an adapter
+had loaded them from application storage. It passes that log to `Project`,
+then creates the Advisor. The Advisor's first consultation replays the loaded
+success and failure and offers a retry plus an alternative. It also prints the
+separate `AdviceHistory` snapshot created by that consultation:
+
+```bash
+python examples/10_resume_from_history/execution.py
 ```
 
 ## Controlling how much the Advisor shows

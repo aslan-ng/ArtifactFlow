@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Iterable
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -89,8 +88,6 @@ class Workflow(
         tool_network = ToolNetwork()
         for tool in self.tools:
             tool_network.add_tool(tool)
-        tool_network.starting_artifacts = deepcopy(self.starting_artifacts)
-        tool_network.target_artifacts = deepcopy(self.target_artifacts)
         return tool_network
 
     def discover_plans(
@@ -442,15 +439,6 @@ class Workflow(
             )
         result = ToolNetwork()
 
-        if self.starting_artifacts is not None and \
-        other.starting_artifacts is not None:
-            if self.starting_artifacts == other.starting_artifacts:
-                result.starting_artifacts = deepcopy(self.starting_artifacts)
-        if self.target_artifacts is not None and \
-        other.target_artifacts is not None:
-            if self.target_artifacts == other.target_artifacts:
-                result.target_artifacts = deepcopy(self.target_artifacts)
-        
         for tool in self.tools:
             result.add_tool(tool)
         for tool in other.tools:

@@ -389,7 +389,7 @@ class TestPlanInputRequirements(unittest.TestCase):
 
 
 class TestWorkflowToolNetworkConversion(unittest.TestCase):
-    def test_to_tool_network_copies_exact_graph_and_boundaries(self):
+    def test_to_tool_network_copies_exact_graph_without_boundaries(self):
         start = Artifact("start")
         target = Artifact("target")
         workflow = make_workflow(
@@ -402,16 +402,8 @@ class TestWorkflowToolNetworkConversion(unittest.TestCase):
         self.assertIsNot(tool_network, workflow)
         self.assertEqual(tool_network.tool_names, workflow.tool_names)
         self.assertTrue(nx.utils.graphs_equal(tool_network.G, workflow.G))
-        self.assertEqual(tool_network.starting_artifacts, ["start"])
-        self.assertEqual(tool_network.target_artifacts, ["target"])
-        self.assertIsNot(
-            tool_network.starting_artifacts,
-            workflow.starting_artifacts,
-        )
-        self.assertIsNot(
-            tool_network.target_artifacts,
-            workflow.target_artifacts,
-        )
+        self.assertFalse(hasattr(tool_network, "starting_artifacts"))
+        self.assertFalse(hasattr(tool_network, "target_artifacts"))
 
     def test_tool_network_contains_an_exact_workflow(self):
         start = Artifact("start")

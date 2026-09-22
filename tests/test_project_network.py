@@ -61,13 +61,11 @@ class TestProjectToolNetwork(unittest.TestCase):
                 self.workflow.G,
             )
         )
-        self.assertEqual(
-            project.tool_network.starting_artifacts,
-            self.workflow.starting_artifacts,
+        self.assertFalse(
+            hasattr(project.tool_network, "starting_artifacts")
         )
-        self.assertEqual(
-            project.tool_network.target_artifacts,
-            self.workflow.target_artifacts,
+        self.assertFalse(
+            hasattr(project.tool_network, "target_artifacts")
         )
 
     def test_accepts_a_supplied_network_that_contains_the_workflow(self):

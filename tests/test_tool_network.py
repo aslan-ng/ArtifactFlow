@@ -57,7 +57,7 @@ class TestToolNetworkDiscover(unittest.TestCase):
     def test_empty_network_has_no_workflows(self):
         self.assertEqual(ToolNetwork().discover(), [])
 
-    def test_remembered_artifact_filters_apply_to_discovery(self):
+    def test_explicit_artifact_boundaries_apply_to_discovery(self):
         start = Artifact("start")
         middle = Artifact("middle")
         target = Artifact("target")
@@ -65,17 +65,19 @@ class TestToolNetworkDiscover(unittest.TestCase):
         second = Tool("second", inputs=[middle], outputs=[target])
         network = make_tool_network(first, second)
 
-        filtered = network.filter(
+        workflows = network.discover(
             starting_artifacts=["start"],
             target_artifacts=["target"],
         )
 
         self.assertEqual(
-            [workflow.tool_names for workflow in filtered.discover()],
+            [workflow.tool_names for workflow in workflows],
             [["first", "second"]],
         )
+        self.assertEqual(workflows[0].starting_artifacts, ["start"])
+        self.assertEqual(workflows[0].target_artifacts, ["target"])
 
-    def test_remembered_start_filter_rejects_downstream_subsets(self):
+    def test_start_boundary_rejects_downstream_subsets(self):
         start = Artifact("start")
         middle = Artifact("middle")
         target = Artifact("target")
@@ -83,10 +85,13 @@ class TestToolNetworkDiscover(unittest.TestCase):
         second = Tool("second", inputs=[middle], outputs=[target])
         network = make_tool_network(first, second)
 
-        filtered = network.filter(starting_artifacts=["start"])
-
         self.assertEqual(
-            [workflow.tool_names for workflow in filtered.discover()],
+            [
+                workflow.tool_names
+                for workflow in network.discover(
+                    starting_artifacts=["start"],
+                )
+            ],
             [["first", "second"], ["first"]],
         )
 
@@ -114,14 +119,12 @@ class TestToolNetworkDiscover(unittest.TestCase):
             return_to_boundary,
             incomplete,
         )
-        filtered = network.filter(
-            starting_artifacts=["boundary"],
-            target_artifacts=["boundary"],
-        )
-
         discovered_tool_names = [
             workflow.tool_names
-            for workflow in filtered.discover()
+            for workflow in network.discover(
+                starting_artifacts=["boundary"],
+                target_artifacts=["boundary"],
+            )
         ]
 
         self.assertIn(["advance", "return"], discovered_tool_names)
@@ -129,15 +132,30 @@ class TestToolNetworkDiscover(unittest.TestCase):
         self.assertNotIn(["advance"], discovered_tool_names)
         self.assertNotIn(["return"], discovered_tool_names)
 
-    def test_remembered_included_tools_are_present_in_every_workflow(self):
+    def test_included_tools_are_present_in_every_workflow(self):
         network = make_tool_network(self.tool_a, self.tool_b)
 
-        filtered = network.filter(include_tools=["A", "B"])
-
         self.assertEqual(
-            [workflow.tool_names for workflow in filtered.discover()],
+            [
+                workflow.tool_names
+                for workflow in network.discover(include_tools=["A", "B"])
+            ],
             [["A", "B"]],
         )
+
+    def test_filter_does_not_store_discovery_criteria(self):
+        network = make_tool_network(self.tool_a, self.tool_b)
+
+        filtered = network.filter(include_tools=["A"])
+
+        self.assertEqual(filtered.tool_names, ["A"])
+        for attribute in (
+            "starting_artifacts",
+            "target_artifacts",
+            "include_tools",
+            "exclude_tools",
+        ):
+            self.assertFalse(hasattr(filtered, attribute))
 
     def test_similar_workflows_are_ranked_and_include_the_reference(self):
         network = make_tool_network(self.tool_a, self.tool_b, self.tool_c)
@@ -171,27 +189,29 @@ class TestToolNetworkDiscover(unittest.TestCase):
             for candidate, _ in ranked
         ))
 
-    def test_similar_workflows_use_remembered_discovery_filters(self):
+    def test_similar_workflows_use_explicit_discovery_criteria(self):
         start = Artifact("start")
         middle = Artifact("middle")
         target = Artifact("target")
         first = Tool("first", inputs=[start], outputs=[middle])
         second = Tool("second", inputs=[middle], outputs=[target])
         network = make_tool_network(first, second)
-        filtered = network.filter(
+        reference = network.to_workflow()
+
+        ranked = network.similar_workflows(
+            reference,
             starting_artifacts=["start"],
             target_artifacts=["target"],
         )
-        reference = filtered.to_workflow()
-
-        ranked = filtered.similar_workflows(reference)
 
         self.assertEqual(len(ranked), 1)
         self.assertEqual(ranked[0][1], 1.0)
         self.assertEqual(
-            filtered.similar_workflows(
+            network.similar_workflows(
                 reference,
                 ignore_identical=True,
+                starting_artifacts=["start"],
+                target_artifacts=["target"],
             ),
             [],
         )
@@ -249,19 +269,18 @@ class TestToolNetworkAddition(unittest.TestCase):
             ["shared"],
         )
 
-    def test_resets_filter_memory(self):
+    def test_combined_network_has_no_problem_boundary(self):
         left = make_tool_network(self.tool_a)
-        left.starting_artifacts = ["shared"]
-        left.target_artifacts = ["shared"]
-        left.include_tools = ["A"]
-        left.exclude_tools = ["B"]
 
         combined = left + make_tool_network(self.tool_b)
 
-        self.assertIsNone(combined.starting_artifacts)
-        self.assertIsNone(combined.target_artifacts)
-        self.assertIsNone(combined.include_tools)
-        self.assertIsNone(combined.exclude_tools)
+        for attribute in (
+            "starting_artifacts",
+            "target_artifacts",
+            "include_tools",
+            "exclude_tools",
+        ):
+            self.assertFalse(hasattr(combined, attribute))
 
 
 if __name__ == "__main__":

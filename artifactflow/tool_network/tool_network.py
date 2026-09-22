@@ -38,14 +38,6 @@ class ToolNetwork(
     Network,
 ):
 
-    def __init__(self):
-        super().__init__()
-
-        self.starting_artifacts: list[str] | None = None
-        self.target_artifacts: list[str] | None = None
-        self.include_tools: list[str] | None = None
-        self.exclude_tools: list[str] | None = None
-
     def contains_workflow(self, workflow: Workflow) -> bool:
         """
         Return whether this network contains the complete workflow.
@@ -99,7 +91,7 @@ class ToolNetwork(
 
         The right operand may be a Workflow or ToolNetwork. Tool order is
         preserved from the left operand, followed by new tools from the right
-        operand. Filter memory is intentionally reset on the returned network.
+        operand.
         """
         if not isinstance(other, (Workflow, ToolNetwork)):
             raise ValueError("incompatible format")
@@ -122,7 +114,7 @@ class ToolNetwork(
 
         The right operand may be a Workflow or ToolNetwork. Tool order is
         preserved from the left operand, followed by new tools from the right
-        operand. Filter memory is NOT reset on the returned network.
+        operand.
         """
         if not isinstance(other, (Workflow, ToolNetwork)):
             raise ValueError("incompatible format")
@@ -166,7 +158,11 @@ class ToolNetwork(
         exclude_tools: list[str] | None = None,
     ) -> "ToolNetwork":
         """
-        Filter tools in the tool network
+        Return a structurally filtered tool network.
+
+        The filtering criteria are used only for this operation. They are not
+        stored on the returned network; workflow discovery boundaries must be
+        passed explicitly to :meth:`discover`.
         """
 
         tools_by_name = {
@@ -251,40 +247,33 @@ class ToolNetwork(
             if tool.name in relevant_nodes:
                 filtered.add_tool(tool)
 
-        filtered.starting_artifacts = (
-            None
-            if starting_artifacts is None
-            else list(starting_artifacts)
-        )
-        filtered.target_artifacts = (
-            None
-            if target_artifacts is None
-            else list(target_artifacts)
-        )
-        filtered.include_tools = (
-            None
-            if include_tools is None
-            else list(include_tools)
-        )
-        filtered.exclude_tools = (
-            None
-            if exclude_tools is None
-            else list(exclude_tools)
-        )
-
         return filtered
 
-    def discover(self) -> list[Workflow]:
+    def discover(
+        self,
+        starting_artifacts: list[str] | None = None,
+        target_artifacts: list[str] | None = None,
+        include_tools: list[str] | None = None,
+        exclude_tools: list[str] | None = None,
+    ) -> list[Workflow]:
         """
-        Create every workflow that satisfies this tool network's filters.
+        Create every workflow that satisfies the given discovery criteria.
 
         Workflows are returned largest first. Tools within each workflow keep
-        their insertion order from the tool network.
+        their insertion order from the tool network. Starting and target
+        artifacts become boundaries of each returned workflow; discovery
+        criteria are never retained by this tool network.
         """
         workflows = []
+        candidate = self.filter(
+            starting_artifacts=starting_artifacts,
+            target_artifacts=target_artifacts,
+            include_tools=include_tools,
+            exclude_tools=exclude_tools,
+        )
 
-        for tool_count in range(len(self.tools), 0, -1):
-            for tools in combinations(self.tools, tool_count):
+        for tool_count in range(len(candidate.tools), 0, -1):
+            for tools in combinations(candidate.tools, tool_count):
                 workflow = Workflow()
 
                 for tool in tools:
@@ -296,24 +285,24 @@ class ToolNetwork(
                 workflow_tool_names = set(workflow.tool_names)
 
                 if (
-                    self.include_tools is not None
-                    and not set(self.include_tools) <= workflow_tool_names
+                    include_tools is not None
+                    and not set(include_tools) <= workflow_tool_names
                 ):
                     continue
 
                 if (
-                    self.exclude_tools is not None
-                    and set(self.exclude_tools) & workflow_tool_names
+                    exclude_tools is not None
+                    and set(exclude_tools) & workflow_tool_names
                 ):
                     continue
 
-                starting_artifacts = self.starting_artifacts or []
-                target_artifacts = self.target_artifacts or []
+                starts = starting_artifacts or []
+                targets = target_artifacts or []
 
-                if not set(starting_artifacts) <= workflow.G.nodes:
+                if not set(starts) <= workflow.G.nodes:
                     continue
 
-                if not set(target_artifacts) <= workflow.G.nodes:
+                if not set(targets) <= workflow.G.nodes:
                     continue
 
                 targets_are_produced = all(
@@ -323,28 +312,36 @@ class ToolNetwork(
                             target_artifact
                         )
                     )
-                    for target_artifact in target_artifacts
+                    for target_artifact in targets
                 )
 
                 if not targets_are_produced:
                     continue
 
-                if starting_artifacts and target_artifacts:
+                if starts and targets:
                     has_all_paths = all(
                         _has_positive_length_path(
                             workflow.G,
                             start,
                             target,
                         )
-                        for start in starting_artifacts
-                        for target in target_artifacts
+                        for start in starts
+                        for target in targets
                     )
 
                     if not has_all_paths:
                         continue
 
-                workflow.starting_artifacts = deepcopy(self.starting_artifacts)
-                workflow.target_artifacts = deepcopy(self.target_artifacts)
+                workflow.starting_artifacts = (
+                    None
+                    if starting_artifacts is None
+                    else list(starting_artifacts)
+                )
+                workflow.target_artifacts = (
+                    None
+                    if target_artifacts is None
+                    else list(target_artifacts)
+                )
 
                 workflows.append(workflow)
 
@@ -510,13 +507,18 @@ class ToolNetwork(
         workflow: Workflow,
         *,
         ignore_identical: bool = False,
+        starting_artifacts: list[str] | None = None,
+        target_artifacts: list[str] | None = None,
+        include_tools: list[str] | None = None,
+        exclude_tools: list[str] | None = None,
     ) -> list[tuple[Workflow, float]]:
         """
         Return discovered workflows ranked by similarity to a workflow.
 
         All candidates are aligned together in one QAP study so every score
         uses the same node universe. Structurally identical candidates are
-        included by default with a score of 1.0.
+        included by default with a score of 1.0. Discovery criteria are
+        forwarded to :meth:`discover` and are not retained by the network.
         """
         if not isinstance(workflow, Workflow):
             raise TypeError("workflow must be a Workflow.")
@@ -526,7 +528,12 @@ class ToolNetwork(
 
         candidates = [
             candidate
-            for candidate in self.discover()
+            for candidate in self.discover(
+                starting_artifacts=starting_artifacts,
+                target_artifacts=target_artifacts,
+                include_tools=include_tools,
+                exclude_tools=exclude_tools,
+            )
             if not ignore_identical
             or not nx.utils.graphs_equal(candidate.G, workflow.G)
         ]
@@ -586,10 +593,13 @@ if __name__ == "__main__":
 
     tool_network.show()
 
-    filtered_tool_network = tool_network.filter(exclude_tools=["Tool 4", "Tool 2"])
-    filtered_tool_network = filtered_tool_network.filter(starting_artifacts=["Artifact 4"])
+    filtered_tool_network = tool_network.filter(
+        exclude_tools=["Tool 4", "Tool 2"],
+    )
 
     filtered_tool_network.show()
 
-    workflows = filtered_tool_network.discover()
+    workflows = filtered_tool_network.discover(
+        starting_artifacts=["Artifact 4"],
+    )
     print(len(workflows))

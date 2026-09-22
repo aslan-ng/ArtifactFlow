@@ -4,19 +4,20 @@ from artifactflow.similarity.graphics import SimilarityGraphics
 from tools import tool_network
 
 
-filtered_tool_network = tool_network.filter(
+discovery_boundary = dict(
     starting_artifacts=["CAD File"],
     target_artifacts=["CAD File"],
 )
-workflows = filtered_tool_network.discover()
+workflows = tool_network.discover(**discovery_boundary)
 
 if not workflows:
     raise RuntimeError("No workflows were discovered.")
 
 reference_workflow = workflows[3]
 #reference_workflow.show()
-similar_workflows = filtered_tool_network.similar_workflows(
+similar_workflows = tool_network.similar_workflows(
     workflow=reference_workflow,
+    **discovery_boundary,
 )
 candidate_workflows = [
     workflow

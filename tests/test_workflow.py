@@ -255,7 +255,8 @@ class TestWorkflowAddition(unittest.TestCase):
 
         self.assertIsInstance(combined, ToolNetwork)
         self.assertEqual(combined.tool_names, ["first", "second"])
-        self.assertEqual(combined.starting_artifacts, ["start"])
+        self.assertFalse(hasattr(combined, "starting_artifacts"))
+        self.assertFalse(hasattr(combined, "target_artifacts"))
 
 
 if __name__ == "__main__":
